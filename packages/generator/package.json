@@ -1,0 +1,16 @@
+{
+  "name": "@minimal/generator",
+  "version": "1.0.0",
+  "description": "Introspects binary services to generate TS proxies",
+  "main": "index.ts",
+  "bin": {
+    "gen-proxy": "./index.ts"
+  },
+  "scripts": {
+    "generate": "tsx index.ts"
+  },
+  "dependencies": {
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

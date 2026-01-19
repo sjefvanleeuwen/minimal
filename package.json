@@ -1,0 +1,14 @@
+{
+  "name": "minimal-monorepo",
+  "private": true,
+  "packageManager": "pnpm@10.26.0",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "generate": "turbo run generate"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0",
+    "turbo": "latest"
+  }
+}
