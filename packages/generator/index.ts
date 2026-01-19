@@ -4,7 +4,7 @@ import * as path from 'path';
 
 const PORT = 8081;
 const HOST = '127.0.0.1';
-const CONTRACT_SIZE = 100;
+const CONTRACT_SIZE = 128;
 
 async function introspect() {
     return new Promise((resolve, reject) => {
@@ -24,9 +24,11 @@ async function introspect() {
                 const id = String.fromCharCode(chunk[0]);
                 const name = chunk.slice(1, 32).toString('utf8').replace(/\0/g, '').trim();
                 const responseSize = chunk.readUInt32LE(32);
-                const schema = chunk.slice(36, 100).toString('utf8').replace(/\0/g, '').trim();
+                const type = chunk.readUInt32LE(36);
+                const reqSchema = chunk.slice(40, 84).toString('utf8').replace(/\0/g, '').trim();
+                const resSchema = chunk.slice(84, 128).toString('utf8').replace(/\0/g, '').trim();
 
-                contracts.push({ id, name, responseSize, schema });
+                contracts.push({ id, name, responseSize, type, reqSchema, resSchema });
             }
             client.destroy();
         });
@@ -52,28 +54,28 @@ export class BinaryClient {
     constructor(private host: string = 'localhost', private port: number = 8081) {}
 
     private async call(commandId: string, responseSize: number): Promise<ArrayBuffer> {
-        // TCP call logic
-        return new Promise((resolve, reject) => {
-            const net = require('net');
-            const client = new net.Socket();
-            
-            client.connect(this.port, this.host, () => {
-                client.write(commandId);
-            });
+        const url = \`http://\${this.host}:\${this.port}/\${commandId}\`;
+        const resp = await fetch(url);
+        return await resp.arrayBuffer();
+    }
 
-            client.on('data', (data) => {
-                resolve(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
-                client.destroy();
-            });
-
-            client.on('error', (err) => reject(err));
-        });
+    /**
+     * Helper to read a variable-length string from a DataView
+     */
+    public readString(view: DataView, offset: { value: number }): string {
+        const len = view.getUint32(offset.value, true);
+        offset.value += 4;
+        const bytes = new Uint8Array(view.buffer, view.byteOffset + offset.value, len);
+        offset.value += len;
+        return new TextDecoder().decode(bytes);
     }
 
     ${contracts.map(c => `
     /**
      * ${c.name}
-     * Expected Response: ${c.responseSize} bytes
+     * Type: ${c.type === 1 ? 'Streaming' : 'Request-Response'}
+     * Schema: ${c.resSchema}
+     * Expected Response: ${c.responseSize === 0 ? 'Variable' : c.responseSize + ' bytes'}
      */
     async ${c.name}(): Promise<ArrayBuffer> {
         return this.call('${c.id}', ${c.responseSize});

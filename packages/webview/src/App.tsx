@@ -73,17 +73,24 @@ function App() {
     const encodeBinary = (schema: string, data: Record<string, string>): ArrayBuffer => {
         let size = 0;
         const fields = schema.split('|').filter(f => f);
+        
+        // Pass 1: calculate size
         fields.forEach(field => {
-            const [type] = field.split(':');
+            const [type, name] = field.split(':');
             if (type === 'u32' || type === 'i32' || type === 'f32') size += 4;
             else if (type === 'u8') size += 1;
             else if (type.startsWith('c')) size += parseInt(type.substring(1));
+            else if (type === 'str') {
+                const val = data[name] || "";
+                size += 4 + new TextEncoder().encode(val).length;
+            }
         });
 
         const buf = new ArrayBuffer(size);
         const view = new DataView(buf);
         let offset = 0;
 
+        // Pass 2: encode
         fields.forEach(field => {
             const [type, name] = field.split(':');
             const val = data[name] || "0";
@@ -96,6 +103,12 @@ function App() {
                 const encoded = new TextEncoder().encode(val);
                 new Uint8Array(buf, offset, len).set(encoded.slice(0, len));
                 offset += len;
+            } else if (type === 'str') {
+                const encoded = new TextEncoder().encode(val);
+                view.setUint32(offset, encoded.length, true);
+                offset += 4;
+                new Uint8Array(buf, offset, encoded.length).set(encoded);
+                offset += encoded.length;
             }
         });
         return buf;
@@ -126,6 +139,11 @@ function App() {
                 } else if (type.startsWith('c')) {
                     const len = parseInt(type.substring(1));
                     result[name] = new TextDecoder().decode(buf.slice(offset, offset + len)).replace(/\0/g, '');
+                    offset += len;
+                } else if (type === 'str') {
+                    const len = view.getUint32(offset, true);
+                    offset += 4;
+                    result[name] = new TextDecoder().decode(buf.slice(offset, offset + len));
                     offset += len;
                 }
             });
@@ -247,7 +265,7 @@ function App() {
                                 </div>
                                 <div className="cell-body">
                                     <div className="info-row">
-                                        <span>RESPONSE SIZE:</span> <strong>{c.responseSize} BYTES</strong>
+                                        <span>RESPONSE SIZE:</span> <strong>{c.responseSize === 0 ? 'VARIABLE' : `${c.responseSize} BYTES`}</strong>
                                     </div>
                                     {c.reqSchema && (
                                         <div className="req-inputs">

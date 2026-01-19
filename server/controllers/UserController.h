@@ -85,5 +85,34 @@ public:
             
             return "OK";
         });
+
+        // READ: Get Variable-Length User (ID '8')
+        node.register_command('8', "GetFullUserProfile", 0, "u32:id", "u32:id|str:name|str:email", [&state](const std::string& data) -> std::string {
+            if (data.size() < 4) return "";
+            uint32_t id = *reinterpret_cast<const uint32_t*>(data.data());
+            
+            sqlite3_stmt* stmt;
+            sqlite3_prepare_v2(state.db, "SELECT id, name, email FROM users WHERE id = ?;", -1, &stmt, nullptr);
+            sqlite3_bind_int(stmt, 1, id);
+            
+            std::string result;
+            if (sqlite3_step(stmt) == SQLITE_ROW) {
+                uint32_t rid = sqlite3_column_int(stmt, 0);
+                std::string name = (const char*)sqlite3_column_text(stmt, 1);
+                std::string email = (const char*)sqlite3_column_text(stmt, 2);
+                
+                result.append(reinterpret_cast<char*>(&rid), 4);
+                
+                uint32_t nlen = name.size();
+                result.append(reinterpret_cast<char*>(&nlen), 4);
+                result.append(name);
+                
+                uint32_t elen = email.size();
+                result.append(reinterpret_cast<char*>(&elen), 4);
+                result.append(email);
+            }
+            sqlite3_finalize(stmt);
+            return result;
+        });
     }
 };

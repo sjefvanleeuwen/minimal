@@ -53,6 +53,17 @@ export class BinaryClient {
         return () => ws.close();
     }
 
+    /**
+     * Helper to read a variable-length string from a DataView
+     */
+    public readString(view: DataView, offset: { value: number }): string {
+        const len = view.getUint32(offset.value, true);
+        offset.value += 4;
+        const bytes = new Uint8Array(view.buffer, view.byteOffset + offset.value, len);
+        offset.value += len;
+        return new TextDecoder().decode(bytes);
+    }
+
     
     /**
      * GetWeatherForecast
@@ -80,6 +91,16 @@ export class BinaryClient {
      */
     public subscribeToLiveTelemetry(onData: (data: ArrayBuffer) => void): () => void {
         return this.subscribe('3', onData);
+    }
+
+
+    /**
+     * GetFullUserProfile
+     * Expected Response: Variable
+     * Schema: u32:id|str:name|str:email
+     */
+    public async GetFullUserProfile(): Promise<ArrayBuffer> {
+        return this.call('8', 0);
     }
 
 }

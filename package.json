@@ -5,7 +5,12 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "generate": "turbo run generate"
+    "generate": "turbo run generate",
+    "server:build": "cmake -S server -B server/build && cmake --build server/build --config Release",
+    "server:run": "pnpm run server:run:linux || pnpm run server:run:windows",
+    "server:run:linux": "./server/build/server",
+    "server:run:windows": "server\\build\\Release\\server.exe",
+    "dev:local": "turbo run dev --filter webview & pnpm server:run"
   },
   "devDependencies": {
     "tsx": "^4.21.0",

@@ -18,6 +18,7 @@ The server listens for incoming TCP connections on port 8081 and immediately res
 
 ### Build and Run
 
+#### Option A: Docker (Recommended)
 1. **Build the image:**
    ```bash
    docker build -t minimal-binary .
@@ -27,6 +28,39 @@ The server listens for incoming TCP connections on port 8081 and immediately res
    ```bash
    docker run -p 8081:8081 minimal-binary
    ```
+
+#### Option B: Local Development (Linux or Windows with WSL)
+Since the server uses `epoll` for high-performance networking, it requires a Linux environment. On Windows, please use **WSL (Windows Subsystem for Linux)**.
+
+1.  **Install Node.js & Dependencies (WSL/Ubuntu):**
+    If you don't have Node.js or pnpm installed in WSL, run:
+    ```bash
+    # Install Node.js 22
+    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+
+    # Install pnpm & build tools
+    sudo npm install -g pnpm
+    sudo apt install -y build-essential cmake
+    ```
+
+2.  **Build and Run the Server:**
+    ```bash
+    pnpm server:build
+    pnpm server:run
+    ```
+
+3.  **Run the Frontend (in a separate terminal):**
+    ```bash
+    pnpm dev
+    ```
+
+### Project Automation
+The root `package.json` contains helper scripts:
+- `pnpm server:build`: Compiles the C++ server using CMake.
+- `pnpm server:run`: Execution of the compiled binary.
+- `pnpm dev`: Starts the webview in watch mode.
+- `pnpm build`: Full project build via Turbo.
 
 ## Technical Details
 - **Binary Format:** 

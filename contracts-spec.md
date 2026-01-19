@@ -25,7 +25,17 @@ Mapping of 1-byte Command IDs to logical service names.
 | `0x32` | `'2'` | `GetSystemStatus` | Returns system health string | `FixedString` |
 
 ## 3. Data Schema (Binary Structs)
-Schemas are defined as fixed-width C-style structs to ensure zero-parser overhead. All integers use **Little Endian** (standard for x86/ARM).
+Schemas are defined as fixed-width C-style structs to ensure zero-parser overhead for most calls. For dynamic data, we use a length-prefixed format. 
+
+All integers use **Little Endian**.
+
+#### Fixed-Width Types
+- `uint32`, `int32`: 4 bytes.
+- `char[N]`: N bytes, NULL-terminated string.
+- `float`: 4 bytes.
+
+#### Variable-Width Types
+- `str`: **Length-prefixed string**. Consists of a `uint32_t` length followed by the UTF-8 bytes. Total size = `4 + length`.
 
 ### WeatherData (`0x31`)
 Total Size: **24 bytes**
@@ -36,31 +46,48 @@ Total Size: **24 bytes**
 | 4 | `temp_c` | `int32` | 4 | Temperature in Celsius |
 | 8 | `summary` | `char[16]`| 16 | NULL-terminated string summary |
 
+### UserProfile (`0x38`) - Example of Variable Size
+Total Size: **Variable**
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `id` | `uint32` | User unique ID |
+| `name` | `str` | Variable-length username |
+| `email` | `str` | Variable-length email |
+
 ---
 
 ## 4. Client Implementation Guide
-To call the API, the client must implement the following logic (pseudocode):
+To call the API, the client must implement the following logic:
 
+### For Fixed-Size Structs:
 ```cpp
-// 1. Define the local contract to match server memory layout
-struct WeatherData {
-    uint32_t date;
-    int32_t temp_c;
-    char summary[16];
-};
+// ZERO-PARSER MAGIC: Just cast the memory
+return *reinterpret_cast<WeatherData*>(buffer);
+```
 
-// 2. Wrap the binary call in a named method
-WeatherData GetWeatherForecast(Socket s) {
-    char cmd = '1';
-    s.send(&cmd, 1);
+### For Variable-Size Structs:
+Clients must read fields sequentially.
+```typescript
+function parseUserProfile(buffer: ArrayBuffer) {
+    const view = new DataView(buffer);
+    let offset = 0;
     
-    char buffer[24];
-    s.recv(buffer, 24);
+    const id = view.getUint32(offset, true);
+    offset += 4;
     
-    // ZERO-PARSER MAGIC: Just cast the memory
-    return *reinterpret_cast<WeatherData*>(buffer);
+    const nameLen = view.getUint32(offset, true);
+    offset += 4;
+    const name = new TextDecoder().decode(buffer.slice(offset, offset + nameLen));
+    offset += nameLen;
+    
+    const emailLen = view.getUint32(offset, true);
+    offset += 4;
+    const email = new TextDecoder().decode(buffer.slice(offset, offset + emailLen));
+    offset += emailLen;
 }
 ```
+
 
 ## 5. Versioning
 - **Major Changes:** Change the Port (e.g., 8081 to 8082).
