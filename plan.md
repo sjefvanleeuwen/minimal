@@ -24,7 +24,8 @@ A multi-stage build:
 - **OS Layer:** None.
 
 ## Implementation Steps
-1. Create `main.cpp` with raw socket logic.
-2. Create a multi-stage `Dockerfile`.
-3. Build the Docker image.
-4. Run and verify the footprint.
+1. Create `minimal_web.h`: A reusable, header-only HTTP server engine using `epoll` and `std::thread`.
+2. Create `main.cpp`: Define endpoints and clear routing logic.
+3. Create a multi-stage `Dockerfile` with aggressive LTO and symbol stripping.
+4. Build the Docker image.
+5. Run and verify the footprint.

@@ -1,7 +1,7 @@
 # Stage 1: Build
 FROM alpine:latest AS builder
 RUN apk add --no-cache g++
-COPY main.cpp .
+COPY . .
 RUN g++ -Os -s -static \
     -fno-exceptions -fno-rtti \
     -ffunction-sections -fdata-sections \
