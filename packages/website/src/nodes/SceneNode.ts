@@ -6,17 +6,23 @@ export abstract class SceneNode {
     public rotation: quat = quat.create(); // Use quaternion for AAA physics sync
     public color: number[] = [1, 1, 1, 1];
 
+    // GPU Caching
+    public vertexBuffer: GPUBuffer | null = null;
+    public vertexCount: number = 0;
+    public uniformBuffer: GPUBuffer | null = null;
+    public bindGroup: GPUBindGroup | null = null;
+
     abstract getVertices(): Float32Array;
     
-    getModelMatrix(): mat4 {
-        const modelMatrix = mat4.create();
-        mat4.translate(modelMatrix, modelMatrix, this.position);
+    getModelMatrix(out: mat4): mat4 {
+        mat4.identity(out);
+        mat4.translate(out, out, this.position);
         
         const rotationMatrix = mat4.create();
         mat4.fromQuat(rotationMatrix, this.rotation);
-        mat4.multiply(modelMatrix, modelMatrix, rotationMatrix);
+        mat4.multiply(out, out, rotationMatrix);
 
-        mat4.scale(modelMatrix, modelMatrix, this.scale);
-        return modelMatrix;
+        mat4.scale(out, out, this.scale);
+        return out;
     }
 }

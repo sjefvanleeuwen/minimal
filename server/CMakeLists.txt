@@ -98,3 +98,35 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 else()
     target_compile_definitions(server PRIVATE JPH_RELEASE)
 endif()
+
+# Performance Test Tool
+add_executable(perf_test
+    tests/performance.cpp
+    physics/PhysicsSystem.h
+)
+
+target_include_directories(perf_test PRIVATE 
+    ${jolt_SOURCE_DIR}
+    .
+)
+
+target_link_libraries(perf_test PRIVATE 
+    EnTT::EnTT
+    Jolt
+)
+
+if(NOT MSVC)
+    target_compile_options(perf_test PRIVATE -Wall -Wextra -Os -msse4.2)
+endif()
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(perf_test PRIVATE JPH_DEBUG)
+else()
+    target_compile_definitions(perf_test PRIVATE JPH_RELEASE)
+endif()
+
+# Socket Stress Test
+add_executable(socket_test tests/socket_test.cpp)
+if(UNIX)
+    target_link_libraries(socket_test PRIVATE pthread)
+endif()

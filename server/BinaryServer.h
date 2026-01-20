@@ -93,7 +93,7 @@ private:
         int tick_counter = 0;
 
         while (broadcast_running) {
-            next_tick += std::chrono::nanoseconds(1000000000 / 60); // Precise 60Hz
+            next_tick += std::chrono::nanoseconds(1000000000 / 60); 
             tick_counter++;
 
             // For each stream type, get data once and broadcast to all clients
@@ -112,7 +112,7 @@ private:
                 
                 // Build WebSocket frame once
                 std::string payload = handler();
-                if (payload.empty()) continue;
+                if (payload.empty()) continue; 
 
                 std::vector<unsigned char> header = WebSocketProtocol::build_frame_header(payload.size());
                 std::vector<unsigned char> full_frame;
