@@ -24,6 +24,7 @@ int main() {
     PhysicsSystem physics;
     entt::registry registry;
     std::atomic<bool> running{true};
+    SharedWorldState world_state;
 
     // Load scene from configuration
     SceneManager scene_manager;
@@ -43,42 +44,50 @@ int main() {
 
     // Start Physics Thread (60Hz)
     std::thread physics_thread([&]() {
-        auto last_time = std::chrono::steady_clock::now();
+        using clock = std::chrono::steady_clock;
+        auto next_tick = clock::now();
+        
         while (running) {
-            auto now = std::chrono::steady_clock::now();
-            last_time = now;
+            next_tick += std::chrono::nanoseconds(1000000000 / 60); // Precise 60Hz
 
-            // Apply inputs as forces before stepping
+            // 1. Gather inputs
+            struct InputSnapshot { entt::entity entity; JPH::BodyID body_id; float dx, dz; };
+            std::vector<InputSnapshot> inputs;
             {
                 std::lock_guard<std::mutex> lock(registry_mutex);
                 auto view = registry.view<PhysicsComponent, InputComponent>();
-                auto &bi = physics.GetBodyInterface();
                 for (auto ent : view) {
                     auto &phys = view.get<PhysicsComponent>(ent);
                     auto &inp = view.get<InputComponent>(ent);
-                    
                     if (inp.dx != 0 || inp.dz != 0) {
-                        float force_magnitude = 25000.0f; // Enough to move a ~4 ton ball
-                        bi.AddForce(phys.body_id, JPH::Vec3(inp.dx * force_magnitude, 0, inp.dz * force_magnitude));
-                        bi.ActivateBody(phys.body_id);
+                        inputs.push_back({ent, phys.body_id, inp.dx, inp.dz});
                     }
                 }
             }
 
-            physics.Step(1.0f / 60.0f); // Fixed step for AAA stability
+            // 2. Apply forces
+            auto &bi = physics.GetBodyInterface();
+            for (auto &in : inputs) {
+                float force_magnitude = 25000.0f;
+                bi.AddForce(in.body_id, JPH::Vec3(in.dx * force_magnitude, 0, in.dz * force_magnitude));
+                bi.ActivateBody(in.body_id);
+            }
 
-            // Sync physics back to ECS and check for "fell off world"
+            // 3. Step physics simulation (Done OUTSIDE the registry lock)
+            physics.Step(1.0f / 60.0f);
+
+            // 4. Sync back to ECS
+            struct SyncUpdate { entt::entity entity; float x, y, z, rx, ry, rz, rw; };
+            std::vector<SyncUpdate> updates;
+            std::vector<PhysicsSyncPayload> stream_payloads;
+
             {
                 std::lock_guard<std::mutex> lock(registry_mutex);
                 auto view = registry.view<PhysicsComponent, TransformComponent>();
-                auto &bi = physics.GetBodyInterface();
                 for (auto ent : view) {
                     auto &phys = view.get<PhysicsComponent>(ent);
-                    auto &trans = view.get<TransformComponent>(ent);
-                    
                     JPH::Vec3 pos = bi.GetPosition(phys.body_id);
                     
-                    // Respawn if fell off (Y < -10)
                     if (pos.GetY() < -10.0f) {
                         bi.SetPosition(phys.body_id, JPH::Vec3(0, 5, 0), JPH::EActivation::Activate);
                         bi.SetLinearVelocity(phys.body_id, JPH::Vec3::sZero());
@@ -87,13 +96,28 @@ int main() {
                     }
 
                     JPH::Quat rot = bi.GetRotation(phys.body_id);
+                    updates.push_back({ent, pos.GetX(), pos.GetY(), pos.GetZ(), rot.GetX(), rot.GetY(), rot.GetZ(), rot.GetW()});
                     
-                    trans.x = pos.GetX(); trans.y = pos.GetY(); trans.z = pos.GetZ();
-                    trans.rx = rot.GetX(); trans.ry = rot.GetY(); trans.rz = rot.GetZ(); trans.rw = rot.GetW();
+                    PhysicsSyncPayload p;
+                    p.entity_id = (uint32_t)ent;
+                    p.x = pos.GetX(); p.y = pos.GetY(); p.z = pos.GetZ();
+                    p.rx = rot.GetX(); p.ry = rot.GetY(); p.rz = rot.GetZ(); p.rw = rot.GetW();
+                    stream_payloads.push_back(p);
+                }
+
+                for (const auto& u : updates) {
+                    auto &trans = registry.get<TransformComponent>(u.entity);
+                    trans.x = u.x; trans.y = u.y; trans.z = u.z;
+                    trans.rx = u.rx; trans.ry = u.ry; trans.rz = u.rz; trans.rw = u.rw;
                 }
             }
 
-            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+            // 5. Push to lockless stream buffer
+            if (!stream_payloads.empty()) {
+                world_state.update(std::string(reinterpret_cast<const char*>(stream_payloads.data()), stream_payloads.size() * sizeof(PhysicsSyncPayload)));
+            }
+
+            std::this_thread::sleep_until(next_tick);
         }
     });
 
@@ -116,7 +140,7 @@ int main() {
     // Delegate registrations
     TestController::register_routes(binary_node, state, start_time);
     UserController::register_routes(binary_node, state);
-    PhysicsController::register_routes(binary_node, registry, physics, scene_manager);
+    PhysicsController::register_routes(binary_node, registry, physics, scene_manager, world_state);
 
     printf("================================================\n");
     printf("   MINIMAL BINARY WEB API - v1.0.0 (MBCS)       \n");

@@ -93,7 +93,7 @@ private:
         int tick_counter = 0;
 
         while (broadcast_running) {
-            next_tick += std::chrono::milliseconds(16); // 60Hz target
+            next_tick += std::chrono::nanoseconds(1000000000 / 60); // Precise 60Hz
             tick_counter++;
 
             // For each stream type, get data once and broadcast to all clients
@@ -110,31 +110,32 @@ private:
                 
                 if (clients_snapshot.empty()) continue;  // No clients, skip this stream
                 
-                // Get payload 
+                // Build WebSocket frame once
                 std::string payload = handler();
                 if (payload.empty()) continue;
+
+                std::vector<unsigned char> header = WebSocketProtocol::build_frame_header(payload.size());
+                std::vector<unsigned char> full_frame;
+                full_frame.reserve(header.size() + payload.size());
+                full_frame.insert(full_frame.end(), header.begin(), header.end());
+                full_frame.insert(full_frame.end(), payload.begin(), payload.end());
                 
                 if (tick_counter % 60 == 0) {
-                    printf("[Server] Stream %c: %zu bytes to %zu clients\n", 
-                           cmd_id, payload.size(), clients_snapshot.size());
+                    printf("[Server] Stream %c: %zu bytes (total %zu) to %zu clients\n", 
+                           cmd_id, payload.size(), full_frame.size(), clients_snapshot.size());
                 }
-
-                // Build WebSocket frame once
-                std::vector<unsigned char> frame = WebSocketProtocol::build_frame_header(payload.size());
 
                 // Broadcast to all clients (no lock held during sends!)
                 std::vector<int> dead_clients;
                 for (int fd : clients_snapshot) {
-                    // Non-blocking send - skip if client can't keep up
-                    ssize_t sent = send(fd, frame.data(), frame.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
+                    // Send combined frame in one syscall
+                    ssize_t sent = send(fd, full_frame.data(), full_frame.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
                     if (sent <= 0) {
                         if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) continue; 
                         dead_clients.push_back(fd);
-                        continue;
-                    }
-                    sent = send(fd, payload.data(), payload.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
-                    if (sent <= 0) {
-                        if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) continue;
+                    } else if ((size_t)sent < full_frame.size()) {
+                        // Partial send - for high-speed binary streams, this client is lagging
+                        // In a production app you might buffer, but for 60Hz we drop to maintain low latency
                         dead_clients.push_back(fd);
                     }
                 }
@@ -214,84 +215,102 @@ private:
     }
 
     void handle_client(int client_fd, int epoll_fd) {
-        char buffer[4096];
-        int bytes = recv(client_fd, buffer, sizeof(buffer) - 1, MSG_DONTWAIT);
-        if (bytes <= 0) { 
-            epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr); 
-            close(client_fd); 
-            return; 
-        }
-        buffer[bytes] = '\0';
-        std::string req(buffer, bytes);
-
-        bool is_http = HttpProtocol::is_http(req);
+        char buffer[8192]; // Larger buffer for one-shot reads
         
-        if (is_http && HttpProtocol::is_options(req)) {
-            HttpProtocol::send_cors_response(client_fd);
-            epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
-            close(client_fd);
-            return;
-        }
-
-        char cmd_id = 0;
-        size_t method_end = req.find(" /");
-        if (method_end != std::string::npos) {
-            size_t path_start = method_end + 2; 
-            if (path_start < req.size() && req[path_start] != ' ') {
-                cmd_id = req[path_start];
+        while (true) {
+            ssize_t bytes = recv(client_fd, buffer, sizeof(buffer) - 1, MSG_DONTWAIT);
+            if (bytes < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) break; // Done for now
+                epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
+                close(client_fd);
+                return;
             }
-        } else if (!is_http) {
-            cmd_id = buffer[0]; 
-        }
+            if (bytes == 0) {
+                epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
+                close(client_fd);
+                return;
+            }
+            
+            buffer[bytes] = '\0';
+            std::string req(buffer, bytes);
 
-        std::string body_input;
-        if (is_http) {
-            body_input = HttpProtocol::extract_body(client_fd, req, buffer, sizeof(buffer));
-        } else if (bytes > 1) {
-            body_input = req.substr(1);
-        }
+            bool is_http = HttpProtocol::is_http(req);
+            
+            if (is_http && HttpProtocol::is_options(req)) {
+                HttpProtocol::send_cors_response(client_fd);
+                epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
+                close(client_fd);
+                return;
+            }
 
-        if (is_http && WebSocketProtocol::is_upgrade(req)) {
-            if (WebSocketProtocol::do_handshake(client_fd, req) != "") {
-                if (streams.count(cmd_id)) {
-                    set_nonblocking(client_fd);
-                    int opt = 1;
-                    setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
-                    {
-                        std::lock_guard<std::mutex> lock(stream_clients_mutex);
-                        stream_clients[cmd_id].insert(client_fd);
-                        printf("[Server] Added stream client fd=%d for cmd=%c (total: %zu)\n", 
-                               client_fd, cmd_id, stream_clients[cmd_id].size());
+            char cmd_id = 0;
+            size_t method_end = req.find(" /");
+            if (method_end != std::string::npos) {
+                size_t path_start = method_end + 2; 
+                if (path_start < req.size() && req[path_start] != ' ') {
+                    cmd_id = req[path_start];
+                }
+            } else if (!is_http) {
+                cmd_id = buffer[0]; 
+            }
+
+            std::string body_input;
+            if (is_http) {
+                body_input = HttpProtocol::extract_body(client_fd, req, buffer, sizeof(buffer));
+            } else if (bytes > 1) {
+                body_input = req.substr(1);
+            }
+
+            if (is_http && WebSocketProtocol::is_upgrade(req)) {
+                if (WebSocketProtocol::do_handshake(client_fd, req) != "") {
+                    if (streams.count(cmd_id)) {
+                        set_nonblocking(client_fd);
+                        int opt = 1;
+                        setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
+                        
+                        // Increase send buffer for smooth streaming
+                        int sndbuf = 128 * 1024;
+                        setsockopt(client_fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+
+                        {
+                            std::lock_guard<std::mutex> lock(stream_clients_mutex);
+                            stream_clients[cmd_id].insert(client_fd);
+                        }
+                        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
+                        return; // Handed off to broadcast
                     }
-                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
-                    return;
                 }
             }
+
+            std::string body;
+            bool found = false;
+
+            if (cmd_id == 0 && is_http) {
+                body = "{\"status\":\"ok\",\"server\":\"BinaryServer\"}";
+                found = true;
+            } else if (cmd_id == '?') {
+                body.assign(reinterpret_cast<const char*>(contract_list.data()), contract_list.size() * sizeof(EndpointContract));
+                found = true;
+            } else if (commands.count(cmd_id)) {
+                body = commands[cmd_id](body_input);
+                found = true;
+            }
+
+            if (is_http) {
+                std::string content_type = (cmd_id == 0) ? "application/json" : "application/octet-stream";
+                HttpProtocol::send_response(client_fd, found, body, content_type);
+                epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
+                close(client_fd);
+                return;
+            } else if (found) {
+                send(client_fd, body.data(), body.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
+                // Keep connection open for next non-http command if desired, 
+                // but current design closes after response for simplicity
+                epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
+                close(client_fd);
+                return;
+            }
         }
-
-        std::string body;
-        bool found = false;
-
-        if (cmd_id == 0 && is_http) {
-            body = "{\"status\":\"ok\",\"server\":\"BinaryServer\"}";
-            found = true;
-        } else if (cmd_id == '?') {
-            body.assign(reinterpret_cast<const char*>(contract_list.data()), contract_list.size() * sizeof(EndpointContract));
-            found = true;
-        } else if (commands.count(cmd_id)) {
-            body = commands[cmd_id](body_input);
-            found = true;
-        }
-
-        if (is_http) {
-            std::string content_type = (cmd_id == 0) ? "application/json" : "application/octet-stream";
-            HttpProtocol::send_response(client_fd, found, body, content_type);
-        } else if (found) {
-            send(client_fd, body.data(), body.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
-        }
-
-        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
-        close(client_fd);
     }
 };
 

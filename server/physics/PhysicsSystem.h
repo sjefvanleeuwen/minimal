@@ -83,7 +83,10 @@ public:
         JPH::RegisterTypes();
 
         temp_allocator = new JPH::TempAllocatorImpl(10 * 1024 * 1024);
-        job_system = new JPH::JobSystemThreadPool(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, std::thread::hardware_concurrency() - 1);
+        
+        // Ensure at least 2 threads for physics jobs to prevent deadlock/starvation
+        int num_threads = std::max(2, (int)std::thread::hardware_concurrency() - 1);
+        job_system = new JPH::JobSystemThreadPool(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, num_threads);
 
         physics_system.Init(cMaxBodies, cMaxBodyMutexes, cMaxMaxBodyPairs, cMaxContactConstraints, 
                             bp_layer_interface, obj_vs_bp_filter, obj_vs_obj_filter);
@@ -134,10 +137,10 @@ public:
     JPH::BodyInterface& GetBodyInterface() { return physics_system.GetBodyInterface(); }
 
 private:
-    static constexpr uint32_t cMaxBodies = 1024;
-    static constexpr uint32_t cMaxBodyMutexes = 0;
-    static constexpr uint32_t cMaxMaxBodyPairs = 1024;
-    static constexpr uint32_t cMaxContactConstraints = 1024;
+    static constexpr uint32_t cMaxBodies = 10240;
+    static constexpr uint32_t cMaxBodyMutexes = 1024;
+    static constexpr uint32_t cMaxMaxBodyPairs = 10240;
+    static constexpr uint32_t cMaxContactConstraints = 10240;
 
     JPH::PhysicsSystem physics_system;
     JPH::TempAllocatorImpl* temp_allocator;

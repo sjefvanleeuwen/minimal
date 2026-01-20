@@ -7,6 +7,7 @@
 #include "../scene/SceneManager.h"
 #include <entt/entt.hpp>
 #include <vector>
+#include "../core/SharedState.h"
 
 struct PhysicsSyncPayload {
     uint32_t entity_id;
@@ -28,7 +29,7 @@ extern std::mutex registry_mutex;
 
 class PhysicsController {
 public:
-    static void register_routes(BinaryServer& server, entt::registry& registry, PhysicsSystem& physics, SceneManager& scene) {
+    static void register_routes(BinaryServer& server, entt::registry& registry, PhysicsSystem& physics, SceneManager& scene, SharedWorldState& world_state) {
         // Asset Manifest 'A' - Get the scene configuration
         server.register_command('A', "GetAssets", 0, "", "json", [&scene](const std::string& input) {
             return scene.get_raw_json();
@@ -88,30 +89,9 @@ public:
             return std::string(reinterpret_cast<const char*>(&status), 4);
         });
 
-        // Stream World State 'W'
-        server.register_stream('W', "WorldStream", sizeof(PhysicsSyncPayload), "world_state", [&registry]() {
-            // Use try_lock to avoid blocking the broadcast thread
-            std::unique_lock<std::mutex> lock(registry_mutex, std::try_to_lock);
-            if (!lock.owns_lock()) {
-                return std::string("");  // Skip this frame if registry is busy
-            }
-            
-            auto view = registry.view<TransformComponent>();
-            std::vector<PhysicsSyncPayload> updates;
-            
-            for (auto entity : view) {
-                auto &trans = view.get<TransformComponent>(entity);
-                PhysicsSyncPayload p;
-                p.entity_id = (uint32_t)entity;
-                p.x = trans.x; p.y = trans.y; p.z = trans.z;
-                p.rx = trans.rx; p.ry = trans.ry; p.rz = trans.rz; p.rw = trans.rw;
-                updates.push_back(p);
-            }
-
-            if (updates.empty()) return std::string("");
-
-            // Return as raw binary blob
-            return std::string(reinterpret_cast<const char*>(updates.data()), updates.size() * sizeof(PhysicsSyncPayload));
+        // Stream World State 'W' - Now pulls from SharedWorldState (Decoupled from Registry lock)
+        server.register_stream('W', "WorldStream", sizeof(PhysicsSyncPayload), "world_state", [&world_state]() {
+            return world_state.get();
         });
     }
 };
