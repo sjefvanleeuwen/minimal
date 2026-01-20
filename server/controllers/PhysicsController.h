@@ -68,9 +68,15 @@ public:
 
         // Stream World State 'W'
         server.register_stream('W', "WorldStream", sizeof(PhysicsSyncPayload), "world_state", [&registry]() {
-            std::lock_guard<std::mutex> lock(registry_mutex);
+            // Use try_lock to avoid blocking the broadcast thread
+            std::unique_lock<std::mutex> lock(registry_mutex, std::try_to_lock);
+            if (!lock.owns_lock()) {
+                return std::string("");  // Skip this frame if registry is busy
+            }
+            
             auto view = registry.view<TransformComponent, ColorComponent>();
             std::vector<PhysicsSyncPayload> updates;
+            updates.reserve(view.size_hint());
             
             for (auto entity : view) {
                 auto &trans = view.get<TransformComponent>(entity);

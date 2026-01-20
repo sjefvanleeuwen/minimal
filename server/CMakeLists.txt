@@ -4,9 +4,12 @@ project(MinimalBinaryServer)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Cache dependencies in a stable location (won't re-download/rebuild)
+set(FETCHCONTENT_BASE_DIR "${CMAKE_SOURCE_DIR}/_deps_cache" CACHE PATH "Dependencies cache")
+
 # Download dependencies
 include(FetchContent)
-set(FETCHCONTENT_QUIET OFF) # Show download progress
+set(FETCHCONTENT_QUIET ON) # Quiet after first download
 
 # SQLite3
 FetchContent_Declare(
@@ -39,6 +42,7 @@ set(TARGET_UNIT_TESTS OFF CACHE INTERNAL "")
 set(TARGET_SAMPLES OFF CACHE INTERNAL "")
 set(TARGET_HELLO_WORLD OFF CACHE INTERNAL "")
 set(TARGET_PERFORMANCE_TEST OFF CACHE INTERNAL "")
+set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE INTERNAL "") # Disable LTO for faster builds
 set(USE_SSE4_1 ON CACHE INTERNAL "")
 set(USE_SSE4_2 ON CACHE INTERNAL "")
 set(USE_AVX ON CACHE INTERNAL "")

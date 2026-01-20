@@ -137,29 +137,30 @@ private:
             tick++;
             // For each stream type, get data once and broadcast to all clients
             for (auto& [cmd_id, handler] : streams) {
-                // Check if we have any clients for this stream
-                size_t client_count = 0;
+                // Get snapshot of client fds (quick lock)
+                std::vector<int> clients_snapshot;
                 {
                     std::lock_guard<std::mutex> lock(stream_clients_mutex);
                     auto it = stream_clients.find(cmd_id);
-                    if (it != stream_clients.end()) {
-                        client_count = it->second.size();
+                    if (it != stream_clients.end() && !it->second.empty()) {
+                        clients_snapshot.assign(it->second.begin(), it->second.end());
                     }
                 }
                 
-                if (client_count == 0) continue;  // No clients, skip this stream
+                if (clients_snapshot.empty()) continue;  // No clients, skip this stream
                 
+                // Get payload (this may lock registry_mutex, but we're not holding stream_clients_mutex)
                 std::string payload = handler();
                 if (payload.empty()) {
-                    if (tick % 60 == 0) {  // Log every second
-                        printf("[Server] Stream %c has %zu clients but empty payload\n", cmd_id, client_count);
+                    if (tick % 60 == 0) {
+                        printf("[Server] Stream %c has %zu clients but empty payload\n", cmd_id, clients_snapshot.size());
                     }
                     continue;
                 }
                 
-                if (tick % 60 == 0) {  // Log every second
+                if (tick % 60 == 0) {
                     printf("[Server] Broadcasting %zu bytes to %zu clients for stream %c\n", 
-                           payload.size(), client_count, cmd_id);
+                           payload.size(), clients_snapshot.size(), cmd_id);
                 }
 
                 // Build WebSocket frame once
@@ -173,28 +174,22 @@ private:
                     frame.push_back((unsigned char)(payload.size() & 0xFF));
                 }
 
-                // Broadcast to all clients for this stream
+                // Broadcast to all clients (no lock held during sends!)
                 std::vector<int> dead_clients;
-                {
-                    std::lock_guard<std::mutex> lock(stream_clients_mutex);
-                    auto it = stream_clients.find(cmd_id);
-                    if (it != stream_clients.end()) {
-                        for (int fd : it->second) {
-                            // Non-blocking send - drop if client can't keep up
-                            ssize_t sent = send(fd, frame.data(), frame.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
-                            if (sent <= 0) {
-                                dead_clients.push_back(fd);
-                                continue;
-                            }
-                            sent = send(fd, payload.data(), payload.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
-                            if (sent <= 0) {
-                                dead_clients.push_back(fd);
-                            }
-                        }
+                for (int fd : clients_snapshot) {
+                    // Non-blocking send - drop if client can't keep up
+                    ssize_t sent = send(fd, frame.data(), frame.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
+                    if (sent <= 0) {
+                        dead_clients.push_back(fd);
+                        continue;
+                    }
+                    sent = send(fd, payload.data(), payload.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
+                    if (sent <= 0) {
+                        dead_clients.push_back(fd);
                     }
                 }
 
-                // Clean up dead clients
+                // Clean up dead clients (quick lock)
                 if (!dead_clients.empty()) {
                     std::lock_guard<std::mutex> lock(stream_clients_mutex);
                     auto it = stream_clients.find(cmd_id);
@@ -258,17 +253,10 @@ private:
         }
     }
 
-    void set_blocking(int fd) {
-        int flags = fcntl(fd, F_GETFL, 0);
-        fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
-    }
-
     void handle_client(int client_fd, int epoll_fd) {
-        // Switch to blocking for simpler request/response handling in the worker
-        set_blocking(client_fd);
-
+        // Keep socket non-blocking, use MSG_DONTWAIT for all operations
         char buffer[4096];
-        int bytes = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
+        int bytes = recv(client_fd, buffer, sizeof(buffer) - 1, MSG_DONTWAIT);
         if (bytes <= 0) { 
             epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr); 
             close(client_fd); 
@@ -284,7 +272,7 @@ private:
         // Handle OPTIONS for CORS
         if (is_http && req.find("OPTIONS ") != std::string::npos) {
             std::string res = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, GET, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nConnection: close\r\n\r\n";
-            send(client_fd, res.data(), res.size(), 0);
+            send(client_fd, res.data(), res.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
             epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
             close(client_fd);
             return;
@@ -311,15 +299,23 @@ private:
             if (body_sep != std::string::npos) {
                 body_input = req.substr(body_sep + 4);
                 
-                // If we have a Content-Length, ensure we read everything
+                // If we have a Content-Length, read remaining body (non-blocking with retry)
                 size_t cl_pos = req.find("Content-Length: ");
                 if (cl_pos != std::string::npos) {
                     size_t cl_end = req.find("\r\n", cl_pos);
                     int expected_len = std::stoi(req.substr(cl_pos + 16, cl_end - (cl_pos + 16)));
-                    while ((int)body_input.size() < expected_len) {
-                        int n = recv(client_fd, buffer, sizeof(buffer), 0);
-                        if (n <= 0) break;
-                        body_input.append(buffer, n);
+                    int retries = 0;
+                    while ((int)body_input.size() < expected_len && retries < 10) {
+                        int n = recv(client_fd, buffer, sizeof(buffer), MSG_DONTWAIT);
+                        if (n > 0) {
+                            body_input.append(buffer, n);
+                            retries = 0;  // Reset on successful read
+                        } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                            retries++;
+                            std::this_thread::sleep_for(std::chrono::microseconds(100));
+                        } else {
+                            break;  // Error or connection closed
+                        }
                     }
                 }
             }
@@ -355,7 +351,7 @@ private:
                     "Connection: Upgrade\r\n"
                     "Sec-WebSocket-Accept: " + accept + "\r\n\r\n";
                 
-                send(client_fd, handshake.data(), handshake.size(), 0);
+                send(client_fd, handshake.data(), handshake.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
 
                 if (streams.count(cmd_id)) {
                     // Set socket to non-blocking for broadcast
@@ -399,9 +395,9 @@ private:
             std::string res = found ? "HTTP/1.1 200 OK\r\n" : "HTTP/1.1 404 Not Found\r\n";
             std::string content_type = (cmd_id == 0) ? "application/json" : "application/octet-stream";
             res += "Content-Type: " + content_type + "\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: " + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body;
-            send(client_fd, res.data(), res.size(), 0);
+            send(client_fd, res.data(), res.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
         } else if (found) {
-            send(client_fd, body.data(), body.size(), 0);
+            send(client_fd, body.data(), body.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
         }
 
         epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
