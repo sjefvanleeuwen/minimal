@@ -182,16 +182,22 @@ private:
         if (is_http && req.find("OPTIONS ") != std::string::npos) {
             std::string res = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, GET, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nConnection: close\r\n\r\n";
             send(client_fd, res.data(), res.size(), 0);
+            epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
             close(client_fd);
             return;
         }
 
-        // Find command ID (the character after the first /)
+        // Find command ID (the character after the first / in the path)
+        // For "GET /J HTTP/1.1", we need to find the / after "GET "
         char cmd_id = 0;
-        size_t path_start = req.find("/");
-        if (path_start != std::string::npos && path_start + 1 < req.size()) {
-            cmd_id = req[path_start + 1];
-        } else {
+        size_t method_end = req.find(" /");
+        if (method_end != std::string::npos) {
+            size_t path_start = method_end + 2; // Position after " /"
+            if (path_start < req.size() && req[path_start] != ' ') {
+                cmd_id = req[path_start];
+            }
+            // If path_start points to space, cmd_id stays 0 (root path)
+        } else if (!is_http) {
             cmd_id = buffer[0]; // Fallback to first byte for raw TCP
         }
 
@@ -285,7 +291,11 @@ private:
         std::string body;
         bool found = false;
 
-        if (cmd_id == '?') {
+        if (cmd_id == 0 && is_http) {
+            // Root path - return server health check
+            body = "{\"status\":\"ok\"}";
+            found = true;
+        } else if (cmd_id == '?') {
             body.assign(reinterpret_cast<const char*>(contract_list.data()), contract_list.size() * sizeof(EndpointContract));
             found = true;
         } else if (commands.count(cmd_id)) {
@@ -295,7 +305,8 @@ private:
 
         if (is_http) {
             std::string res = found ? "HTTP/1.1 200 OK\r\n" : "HTTP/1.1 404 Not Found\r\n";
-            res += "Content-Type: application/octet-stream\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: " + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body;
+            std::string content_type = (cmd_id == 0) ? "application/json" : "application/octet-stream";
+            res += "Content-Type: " + content_type + "\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: " + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body;
             send(client_fd, res.data(), res.size(), 0);
         } else if (found) {
             send(client_fd, body.data(), body.size(), 0);
