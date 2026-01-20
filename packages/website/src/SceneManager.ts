@@ -7,7 +7,8 @@ import { DynamicBinaryClient } from './DynamicBinaryClient';
 
 export class SceneManager {
     public nodes: SceneNode[] = [];
-    public sphere!: SphereNode;
+    public sphere: SphereNode | null = null;
+    private spheres = new Map<number, SphereNode>();
     public ramp!: RampNode;
     private serverEntityId: number | null = null;
     private keys: Record<string, boolean> = {};
@@ -17,9 +18,6 @@ export class SceneManager {
     private lastDz = 0;
 
     constructor() {
-        this.sphere = new SphereNode(1.0); // Increase radius to 1.0 for better visibility
-        this.sphere.color = [0, 0.5, 1.0, 1.0]; // Server controlled sphere (Blue, Opaque)
-
         this.ramp = new RampNode(10, 0.2, 10);
         this.ramp.position = [0, 0.9, -5.0]; 
         quat.fromEuler(this.ramp.rotation, -11.31, 0, 0); 
@@ -27,33 +25,34 @@ export class SceneManager {
         // Match server ground box: half-extents 100 -> size 200
         this.nodes.push(new GroundNode(100)); 
         this.nodes.push(this.ramp);
-        this.nodes.push(this.sphere);
 
         window.addEventListener('keydown', (e) => this.keys[e.key.toLowerCase()] = true);
         window.addEventListener('keyup', (e) => this.keys[e.key.toLowerCase()] = false);
 
         // Simple binary client
         this.client = new DynamicBinaryClient(window.location.hostname === 'localhost' ? '127.0.0.1' : window.location.hostname, 8081);
-        this.startNetworkSync();
+        
+        // Join the game first
+        this.client.call('J', 0, new ArrayBuffer(0)).then(resp => {
+            const view = new DataView(resp);
+            this.serverEntityId = view.getUint32(0, true);
+            console.log(`[SceneManager] Joined game. My Entity ID: ${this.serverEntityId}`);
+            this.startNetworkSync();
+        });
     }
 
     private startNetworkSync() {
         console.log("[SceneManager] Subscribing to WorldStream...");
         this.streamCleanup = this.client.subscribe('W', (data) => {
-            // Decoding WorldStream ('W')
             const view = new DataView(data);
-            const entrySize = 32; // 4 + 12 + 16
+            const entrySize = 48; // 4 (ID) + 12 (Pos) + 16 (Rot) + 16 (Color)
             
-            if (data.byteLength > 0) {
-                // console.log(`[SceneManager] Received ${data.byteLength} bytes from server`);
-            }
+            // Keep track of which entities we saw this frame
+            const seenIds = new Set<number>();
 
             for (let i = 0; i < data.byteLength; i += entrySize) {
                 const entityId = view.getUint32(i, true);
-                if (this.serverEntityId === null) {
-                    this.serverEntityId = entityId;
-                    console.log(`[SceneManager] Bound to server entity ID: ${entityId}`);
-                }
+                seenIds.add(entityId);
                 
                 const px = view.getFloat32(i + 4, true);
                 const py = view.getFloat32(i + 8, true);
@@ -64,9 +63,38 @@ export class SceneManager {
                 const rz = view.getFloat32(i + 24, true);
                 const rw = view.getFloat32(i + 28, true);
 
+                const cr = view.getFloat32(i + 32, true);
+                const cg = view.getFloat32(i + 36, true);
+                const cb = view.getFloat32(i + 40, true);
+                const ca = view.getFloat32(i + 44, true);
+
+                let sphere = this.spheres.get(entityId);
+                if (!sphere) {
+                    console.log(`[SceneManager] New sphere discovered: ${entityId}`);
+                    sphere = new SphereNode(1.0);
+                    sphere.color = [cr, cg, cb, ca];
+                    this.spheres.set(entityId, sphere);
+                    this.nodes.push(sphere);
+                    
+                    // If this is OUR sphere, set the main reference for camera follow
+                    if (entityId === this.serverEntityId) {
+                        this.sphere = sphere;
+                    }
+                }
+
                 // Update sphere from server state
-                vec3.set(this.sphere.position, px, py, pz);
-                quat.set(this.sphere.rotation, rx, ry, rz, rw);
+                vec3.set(sphere.position, px, py, pz);
+                quat.set(sphere.rotation, rx, ry, rz, rw);
+            }
+
+            // Optional: Cleanup spheres that are no longer in the stream
+            for (const [id, sphere] of this.spheres.entries()) {
+                if (!seenIds.has(id)) {
+                    console.log(`[SceneManager] Sphere removed: ${id}`);
+                    this.nodes = this.nodes.filter(n => n !== sphere);
+                    this.spheres.delete(id);
+                    if (id === this.serverEntityId) this.sphere = null;
+                }
             }
         });
     }
@@ -113,7 +141,7 @@ export class SceneManager {
         
         // Camera Follow Logic: Stay behind and above the ball
         // We'll use a fixed offset relative to the ball's position
-        const ballPos = this.sphere.position;
+        const ballPos = this.sphere ? this.sphere.position : vec3.fromValues(0, 0, 0);
         const offset = vec3.fromValues(10, 10, 15);
         const eye = vec3.create();
         vec3.add(eye, ballPos, offset);

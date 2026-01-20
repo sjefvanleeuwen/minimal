@@ -8,6 +8,7 @@
 #include <entt/entt.hpp>
 #include <atomic>
 #include <mutex>
+#include <ctime>
 
 std::mutex registry_mutex;
 
@@ -16,6 +17,7 @@ int main() {
     if (sqlite3_open("minimal_api.db", &state.db) != SQLITE_OK) {
         return 1;
     }
+    srand(time(nullptr));
 
     // Initialize Physics & ECS
     PhysicsSystem physics;
@@ -29,15 +31,6 @@ int main() {
     // Midpoint height = 0.9. Midpoint Z = -5.0. Angle = atan(2/10) = 11.31 deg.
     JPH::Quat ramp_rot = JPH::Quat::sRotation(JPH::Vec3::sAxisX(), -11.31f * JPH::JPH_PI / 180.0f);
     physics.CreateBox(JPH::Vec3(0, 0.9f, -5.0f), JPH::Vec3(5, 0.1f, 5), JPH::EMotionType::Static, Layers::NON_MOVING, ramp_rot);
-
-    // Create a falling sphere for demo - matches client radius 1.0
-    auto entity = registry.create();
-    printf("[Server] Created entity with ID: %d\n", (uint32_t)entity);
-    
-    auto body_id = physics.CreateSphere(JPH::Vec3(0, 5, 0), 1.0f, JPH::EMotionType::Dynamic, Layers::MOVING);
-    registry.emplace<PhysicsComponent>(entity, body_id);
-    registry.emplace<TransformComponent>(entity, 0.0f, 5.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
-    registry.emplace<InputComponent>(entity, 0.0f, 0.0f, 0.0f);
 
     // Start Physics Thread (60Hz)
     std::thread physics_thread([&]() {

@@ -19,4 +19,8 @@ struct InputComponent {
     float dz = 0;
 };
 
+struct ColorComponent {
+    float r, g, b, a;
+};
+
 #endif
