@@ -1,9 +1,10 @@
 #ifndef PHYSICS_CONTROLLER_H
 #define PHYSICS_CONTROLLER_H
 
-#include "../binary_web.h"
+#include "../BinaryServer.h"
 #include "../physics/PhysicsSystem.h"
 #include "../physics/Components.h"
+#include "../scene/SceneManager.h"
 #include <entt/entt.hpp>
 #include <vector>
 
@@ -23,7 +24,12 @@ extern std::mutex registry_mutex;
 
 class PhysicsController {
 public:
-    static void register_routes(BinaryServer& server, entt::registry& registry, PhysicsSystem& physics) {
+    static void register_routes(BinaryServer& server, entt::registry& registry, PhysicsSystem& physics, SceneManager& scene) {
+        // Asset Manifest 'A' - Get the scene configuration
+        server.register_command('A', "GetAssets", 0, "", "json", [&scene](const std::string& input) {
+            return scene.get_raw_json();
+        });
+
         // Join Game 'J' - Spawn a new sphere
         server.register_command('J', "JoinGame", 0, "", "u32", [&registry, &physics](const std::string& input) {
             std::lock_guard<std::mutex> lock(registry_mutex);

@@ -1,5 +1,5 @@
 #pragma once
-#include "../binary_web.h"
+#include "../BinaryServer.h"
 #include "sqlite3.h"
 #include <cstdint>
 #include <string>

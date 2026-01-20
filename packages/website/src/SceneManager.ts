@@ -9,7 +9,6 @@ export class SceneManager {
     public nodes: SceneNode[] = [];
     public sphere: SphereNode | null = null;
     private spheres = new Map<number, SphereNode>();
-    public ramp!: RampNode;
     private serverEntityId: number | null = null;
     private keys: Record<string, boolean> = {};
     private client: DynamicBinaryClient;
@@ -18,27 +17,63 @@ export class SceneManager {
     private lastDz = 0;
 
     constructor() {
-        this.ramp = new RampNode(10, 0.2, 10);
-        this.ramp.position = [0, 0.9, -5.0]; 
-        quat.fromEuler(this.ramp.rotation, -11.31, 0, 0); 
-
-        // Match server ground box: half-extents 100 -> size 200
-        this.nodes.push(new GroundNode(100)); 
-        this.nodes.push(this.ramp);
-
         window.addEventListener('keydown', (e) => this.keys[e.key.toLowerCase()] = true);
         window.addEventListener('keyup', (e) => this.keys[e.key.toLowerCase()] = false);
 
         // Simple binary client
         this.client = new DynamicBinaryClient(window.location.hostname === 'localhost' ? '127.0.0.1' : window.location.hostname, 8081);
         
-        // Join the game first
-        this.client.call('J', 0, new ArrayBuffer(0)).then(resp => {
-            const view = new DataView(resp);
-            this.serverEntityId = view.getUint32(0, true);
-            console.log(`[SceneManager] Joined game. My Entity ID: ${this.serverEntityId}`);
-            this.startNetworkSync();
+        // 1. Fetch assets first, then join
+        this.loadServerAssets().then(() => {
+            // 2. Join the game
+            this.client.call('J', 0, new ArrayBuffer(0)).then(resp => {
+                const view = new DataView(resp);
+                this.serverEntityId = view.getUint32(0, true);
+                console.log(`[SceneManager] Joined game. My Entity ID: ${this.serverEntityId}`);
+                this.startNetworkSync();
+            });
         });
+    }
+
+    private async loadServerAssets() {
+        console.log("[SceneManager] Fetching Server Asset Manifest ('A')...");
+        try {
+            const resp = await this.client.call('A', 0, new ArrayBuffer(0));
+            const jsonStr = new TextDecoder().decode(resp);
+            const config = JSON.parse(jsonStr);
+            
+            if (config.scene && config.scene.nodes) {
+                console.log(`[SceneManager] Loading ${config.scene.nodes.length} nodes from server manifest`);
+                for (const nodeData of config.scene.nodes) {
+                    let node: SceneNode | null = null;
+                    const props = nodeData.properties || {};
+                    
+                    if (nodeData.type === 'Ground') {
+                        node = new GroundNode(props.half_extent_x || 100);
+                    } else if (nodeData.type === 'Ramp') {
+                        node = new RampNode(
+                            (props.half_extent_x || 5) * 2,
+                            (props.half_extent_y || 0.1) * 2,
+                            (props.half_extent_z || 5) * 2
+                        );
+                        if (props.angle_x_degrees !== undefined) {
+                            quat.fromEuler(node.rotation, props.angle_x_degrees, 0, 0);
+                        }
+                    }
+                    
+                    if (node) {
+                        if (nodeData.position) {
+                            vec3.set(node.position, nodeData.position[0], nodeData.position[1], nodeData.position[2]);
+                        }
+                        this.nodes.push(node);
+                    }
+                }
+            }
+        } catch (e) {
+            console.error("[SceneManager] Failed to load server assets, using defaults", e);
+            // Fallback
+            this.nodes.push(new GroundNode(100));
+        }
     }
 
     private startNetworkSync() {

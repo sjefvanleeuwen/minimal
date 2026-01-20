@@ -1,9 +1,10 @@
-#include "binary_web.h"
+#include "BinaryServer.h"
 #include "controllers/TestController.h"
 #include "controllers/UserController.h"
 #include "physics/PhysicsSystem.h"
 #include "physics/Components.h"
 #include "controllers/PhysicsController.h"
+#include "scene/SceneManager.h"
 #include <chrono>
 #include <entt/entt.hpp>
 #include <atomic>
@@ -24,13 +25,21 @@ int main() {
     entt::registry registry;
     std::atomic<bool> running{true};
 
-    // Create a ground plane: half-extent 100x100, top at Y=0
-    physics.CreateBox(JPH::Vec3(0, -1, 0), JPH::Vec3(100, 1, 100), JPH::EMotionType::Static, Layers::NON_MOVING);
-
-    // Ramp: Top connects 0 to 2, Thickness 0.2 -> Center connects -0.1 to 1.9. 
-    // Midpoint height = 0.9. Midpoint Z = -5.0. Angle = atan(2/10) = 11.31 deg.
-    JPH::Quat ramp_rot = JPH::Quat::sRotation(JPH::Vec3::sAxisX(), -11.31f * JPH::JPH_PI / 180.0f);
-    physics.CreateBox(JPH::Vec3(0, 0.9f, -5.0f), JPH::Vec3(5, 0.1f, 5), JPH::EMotionType::Static, Layers::NON_MOVING, ramp_rot);
+    // Load scene from configuration
+    SceneManager scene_manager;
+    if (!scene_manager.load_from_file("server/scene/default.json")) {
+        printf("[Main] Failed to load scene configuration from server/scene/default.json, trying scene/default.json fallback...\n");
+        if (!scene_manager.load_from_file("scene/default.json")) {
+            printf("[Main] Failed to load any scene configuration, using defaults\n");
+            // Fallback: create default ground plane
+            physics.CreateBox(JPH::Vec3(0, -1, 0), JPH::Vec3(100, 1, 100), JPH::EMotionType::Static, Layers::NON_MOVING);
+        } else {
+            scene_manager.create_all(physics);
+        }
+    } else {
+        // Create all scene nodes from configuration
+        scene_manager.create_all(physics);
+    }
 
     // Start Physics Thread (60Hz)
     std::thread physics_thread([&]() {
@@ -107,7 +116,7 @@ int main() {
     // Delegate registrations
     TestController::register_routes(binary_node, state, start_time);
     UserController::register_routes(binary_node, state);
-    PhysicsController::register_routes(binary_node, registry, physics);
+    PhysicsController::register_routes(binary_node, registry, physics, scene_manager);
 
     printf("================================================\n");
     printf("   MINIMAL BINARY WEB API - v1.0.0 (MBCS)       \n");

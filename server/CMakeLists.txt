@@ -59,10 +59,17 @@ endif()
 # The Server Executable
 add_executable(server 
     main.cpp
-    binary_web.h
+    BinaryServer.h
+    utils/SHA1.h
+    core/EndpointContract.h
     controllers/TestController.h
     controllers/UserController.h
     controllers/PhysicsController.h
+    scene/SceneManager.h
+    scene/SceneNode.h
+    scene/GroundNode.h
+    scene/RampNode.h
+    scene/BoxNode.h
     physics/PhysicsSystem.h
 )
 

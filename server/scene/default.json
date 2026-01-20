@@ -1,0 +1,29 @@
+{
+  "scene": {
+    "name": "default",
+    "nodes": [
+      {
+        "name": "Ground",
+        "type": "Ground",
+        "position": [0, -1, 0],
+        "properties": {
+          "half_extent_x": 100.0,
+          "half_extent_y": 1.0,
+          "half_extent_z": 100.0
+        }
+      },
+      {
+        "name": "Ramp",
+        "type": "Ramp",
+        "position": [0, 0.9, -5.0],
+        "rotation": [0, 0, 0],
+        "properties": {
+          "half_extent_x": 5.0,
+          "half_extent_y": 0.1,
+          "half_extent_z": 5.0,
+          "angle_x_degrees": -11.31
+        }
+      }
+    ]
+  }
+}
