@@ -18,6 +18,7 @@ struct PhysicsSyncPayload {
 
 struct EntityMetadata {
     uint32_t entity_id;
+    uint32_t type; // 0 = Box/Cube, 1 = Sphere/Player
     float x, y, z;
     float rx, ry, rz, rw;
     float r, g, b, a;
@@ -80,8 +81,12 @@ public:
             for (auto entity : view) {
                 auto &trans = view.get<TransformComponent>(entity);
                 auto &col = view.get<ColorComponent>(entity);
+                
+                uint32_t type = registry.all_of<PlayerComponent>(entity) ? 1 : 0;
+                
                 metas.push_back({
                     (uint32_t)entity, 
+                    type,
                     trans.x, trans.y, trans.z, 
                     trans.rx, trans.ry, trans.rz, trans.rw,
                     col.r, col.g, col.b, col.a
@@ -108,6 +113,7 @@ public:
             auto& trans = registry.get<TransformComponent>(entity);
             EntityMetadata meta = {
                 (uint32_t)entity, 
+                1, // Player is always 1 (Sphere)
                 trans.x, trans.y, trans.z, 
                 trans.rx, trans.ry, trans.rz, trans.rw,
                 col.r, col.g, col.b, col.a

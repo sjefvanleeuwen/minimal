@@ -42,6 +42,9 @@ export class SceneManager {
     }
 
     private startStatsSync() {
+        const history: number[] = [];
+        const maxHistory = 50;
+
         this.client.subscribe('S', (payload: ArrayBuffer) => {
             const view = new DataView(payload);
             const active = view.getUint32(0, true);
@@ -53,11 +56,36 @@ export class SceneManager {
             const elTotal = document.getElementById('stats-total');
             const elClients = document.getElementById('stats-clients');
             const elPackets = document.getElementById('stats-packets');
+            const chartCanvas = document.getElementById('stats-chart') as HTMLCanvasElement;
             
             if (elActive) elActive.textContent = active.toString();
             if (elTotal) elTotal.textContent = total.toString();
             if (elClients) elClients.textContent = clients.toString();
             if (elPackets) elPackets.textContent = packets.toLocaleString();
+
+            if (chartCanvas) {
+                history.push(active);
+                if (history.length > maxHistory) history.shift();
+
+                const ctx = chartCanvas.getContext('2d');
+                if (ctx) {
+                    ctx.clearRect(0, 0, chartCanvas.width, chartCanvas.height);
+                    ctx.strokeStyle = '#0f0';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    
+                    const step = chartCanvas.width / (maxHistory - 1);
+                    const maxVal = Math.max(total, 10); // Scale relative to total/min 10
+                    
+                    for (let i = 0; i < history.length; i++) {
+                        const x = i * step;
+                        const y = chartCanvas.height - (history[i] / maxVal) * chartCanvas.height;
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.stroke();
+                }
+            }
         });
     }
 
@@ -65,44 +93,58 @@ export class SceneManager {
         try {
             const resp = await this.client.call('E', 0, new ArrayBuffer(0));
             const view = new DataView(resp);
-            const entrySize = 48; // ID(4) + Trans(28) + Color(16)
+            const entrySize = 52; // ID(4) + Type(4) + Trans(28) + Color(16)
             for (let i = 0; i < resp.byteLength; i += entrySize) {
                 const id = view.getUint32(i, true);
+                const type = view.getUint32(i + 4, true);
                 
                 // Get the transform data from the initial sync
-                const px = view.getFloat32(i + 4, true);
-                const py = view.getFloat32(i + 8, true);
-                const pz = view.getFloat32(i + 12, true);
-                const rx = view.getFloat32(i + 16, true);
-                const ry = view.getFloat32(i + 20, true);
-                const rz = view.getFloat32(i + 24, true);
-                const rw = view.getFloat32(i + 28, true);
+                const px = view.getFloat32(i + 8, true);
+                const py = view.getFloat32(i + 12, true);
+                const pz = view.getFloat32(i + 16, true);
+                const rx = view.getFloat32(i + 20, true);
+                const ry = view.getFloat32(i + 24, true);
+                const rz = view.getFloat32(i + 28, true);
+                const rw = view.getFloat32(i + 32, true);
 
-                const r = view.getFloat32(i + 32, true);
-                const g = view.getFloat32(i + 36, true);
-                const b = view.getFloat32(i + 40, true);
-                const a = view.getFloat32(i + 44, true);
+                const r = view.getFloat32(i + 36, true);
+                const g = view.getFloat32(i + 40, true);
+                const b = view.getFloat32(i + 44, true);
+                const a = view.getFloat32(i + 48, true);
                 
                 let node = this.spheres.get(id);
-                if (!node) {
-                    node = new CubeNode(1.0);
+                const expectedClass = type === 1 ? SphereNode : CubeNode;
+
+                if (!node || !(node instanceof expectedClass)) {
+                    // Remove old node if it's the wrong type
+                    if (node) {
+                        const idx = this.nodes.indexOf(node);
+                        if (idx !== -1) this.nodes.splice(idx, 1);
+                    }
+
+                    node = new expectedClass(1.0);
                     this.spheres.set(id, node);
                     this.nodes.push(node);
+                    
+                    // If this is us, restore the reference
+                    if (id === this.serverEntityId) {
+                        this.sphere = node;
+                    }
                 }
                 
                 node.color = [r, g, b, a];
                 vec3.set(node.position, px, py, pz);
                 quat.set(node.rotation, rx, ry, rz, rw);
 
-                // Pre-cache for any future stream updates
-                this.metadataCache.set(id, [r, g, b, a]);
+                // Pre-cache type and color for any future stream updates
+                this.metadataCache.set(id, { type, color: [r, g, b, a] });
             }
         } catch (e) {
             console.warn("[SceneManager] Failed to refresh entity metadata", e);
         }
     }
 
-    private metadataCache = new Map<number, [number, number, number, number]>();
+    private metadataCache = new Map<number, { type: number, color: [number, number, number, number] }>();
 
     private async loadServerAssets() {
         console.log("[SceneManager] Fetching Server Asset Manifest ('A')...");
@@ -171,18 +213,18 @@ export class SceneManager {
                 if (!node) {
                     console.log(`[SceneManager] New entity discovered: ${entityId}`);
                     
-                    if (entityId === this.serverEntityId) {
-                        node = new SphereNode(1.0);
-                        this.sphere = node;
+                    const cached = this.metadataCache.get(entityId);
+                    if (cached) {
+                        node = cached.type === 1 ? new SphereNode(1.0) : new CubeNode(1.0);
+                        node.color = cached.color;
                     } else {
-                        node = new CubeNode(1.0);
-                    }
-                    
-                    // Use cached color or request one
-                    const cachedColor = this.metadataCache.get(entityId);
-                    if (cachedColor) {
-                        node.color = cachedColor;
-                    } else {
+                        // Default to sphere if it's us, otherwise cube until metadata arrives
+                        if (entityId === this.serverEntityId) {
+                            node = new SphereNode(1.0);
+                            this.sphere = node;
+                        } else {
+                            node = new CubeNode(1.0);
+                        }
                         this.refreshEntityMetadata();
                     }
 
