@@ -1,13 +1,76 @@
 #include "binary_web.h"
 #include "controllers/TestController.h"
 #include "controllers/UserController.h"
+#include "physics/PhysicsSystem.h"
+#include "physics/Components.h"
+#include "controllers/PhysicsController.h"
 #include <chrono>
+#include <entt/entt.hpp>
+#include <atomic>
+#include <mutex>
+
+std::mutex registry_mutex;
 
 int main() {
     DbState state;
-    if (sqlite3_open(":memory:", &state.db) != SQLITE_OK) {
+    if (sqlite3_open("minimal_api.db", &state.db) != SQLITE_OK) {
         return 1;
     }
+
+    // Initialize Physics & ECS
+    PhysicsSystem physics;
+    entt::registry registry;
+    std::atomic<bool> running{true};
+
+    // Create a ground plane: half-extent 100x100, top at Y=0
+    physics.CreateBox(JPH::Vec3(0, -1, 0), JPH::Vec3(100, 1, 100), JPH::EMotionType::Static, Layers::NON_MOVING);
+
+    // Plateau: Top at Y=2.0, Thickness 0.2 -> Center at Y=1.9
+    physics.CreateBox(JPH::Vec3(0, 1.9f, -15.0f), JPH::Vec3(5, 0.1f, 5), JPH::EMotionType::Static, Layers::NON_MOVING);
+
+    // Ramp: Top connects 0 to 2, Thickness 0.2 -> Center connects -0.1 to 1.9. 
+    // Midpoint height = 0.9. Midpoint Z = -5.0. Angle = atan(2/10) = 11.31 deg.
+    JPH::Quat ramp_rot = JPH::Quat::sRotation(JPH::Vec3::sAxisX(), -11.31f * JPH::JPH_PI / 180.0f);
+    physics.CreateBox(JPH::Vec3(0, 0.9f, -5.0f), JPH::Vec3(5, 0.1f, 5), JPH::EMotionType::Static, Layers::NON_MOVING, ramp_rot);
+
+    // Create a falling sphere for demo - matches client radius 0.5
+    auto entity = registry.create();
+    printf("[Server] Created entity with ID: %d\n", (uint32_t)entity);
+    
+    auto body_id = physics.CreateSphere(JPH::Vec3(0, 10, 0), 0.5f, JPH::EMotionType::Dynamic, Layers::MOVING);
+    registry.emplace<PhysicsComponent>(entity, body_id);
+    registry.emplace<TransformComponent>(entity, 0.0f, 10.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+
+    // Start Physics Thread (60Hz)
+    std::thread physics_thread([&]() {
+        auto last_time = std::chrono::steady_clock::now();
+        while (running) {
+            auto now = std::chrono::steady_clock::now();
+            // float dt = std::chrono::duration<float>(now - last_time).count(); // Not used currently
+            last_time = now;
+
+            physics.Step(1.0f / 60.0f); // Fixed step for AAA stability
+
+            // Sync physics back to ECS
+            {
+                std::lock_guard<std::mutex> lock(registry_mutex);
+                auto view = registry.view<PhysicsComponent, TransformComponent>();
+                auto &bi = physics.GetBodyInterface();
+                for (auto ent : view) {
+                    auto &phys = view.get<PhysicsComponent>(ent);
+                    auto &trans = view.get<TransformComponent>(ent);
+                    
+                    JPH::Vec3 pos = bi.GetPosition(phys.body_id);
+                    JPH::Quat rot = bi.GetRotation(phys.body_id);
+                    
+                    trans.x = pos.GetX(); trans.y = pos.GetY(); trans.z = pos.GetZ();
+                    trans.rx = rot.GetX(); trans.ry = rot.GetY(); trans.rz = rot.GetZ(); trans.rw = rot.GetW();
+                }
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+    });
 
     // Initialize Schema
     char* errMsg = nullptr;
@@ -15,7 +78,12 @@ int main() {
     sqlite3_exec(state.db, "INSERT INTO stats (id, hits) VALUES (1, 0) ON CONFLICT(id) DO NOTHING;", nullptr, nullptr, &errMsg);
     
     // User Schema
-    sqlite3_exec(state.db, "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT);", nullptr, nullptr, &errMsg);
+    sqlite3_exec(state.db, "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, email TEXT UNIQUE, password TEXT);", nullptr, nullptr, &errMsg);
+    
+    // Migrations for existing databases
+    sqlite3_exec(state.db, "ALTER TABLE users ADD COLUMN password TEXT;", nullptr, nullptr, nullptr);
+    sqlite3_exec(state.db, "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_name ON users(name);", nullptr, nullptr, nullptr);
+    sqlite3_exec(state.db, "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);", nullptr, nullptr, nullptr);
 
     BinaryServer binary_node(8081);
     auto start_time = std::chrono::steady_clock::now();
@@ -23,6 +91,17 @@ int main() {
     // Delegate registrations
     TestController::register_routes(binary_node, state, start_time);
     UserController::register_routes(binary_node, state);
+    PhysicsController::register_routes(binary_node, registry, physics);
+
+    printf("================================================\n");
+    printf("   MINIMAL BINARY WEB API - v1.0.0 (MBCS)       \n");
+    printf("================================================\n");
+    printf("[Status] Core: Raw Binary / ZERO-PARSER         \n");
+    printf("[Status] HTTP: Enabled (Hybrid Mode)            \n");
+    printf("[Status] Port: 8081                             \n");
+    printf("[Status] DB  : SQLite3 (minimal_api.db)         \n");
+    printf("------------------------------------------------\n");
+    printf("Waiting for commands...\n");
 
     binary_node.start();
     binary_node.join();

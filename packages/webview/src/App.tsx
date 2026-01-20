@@ -219,6 +219,23 @@ function App() {
         try {
             const body = contract.reqSchema ? encodeBinary(contract.reqSchema, inputs[contract.id] || {}) : undefined;
             const buf = await client.call(contract.id, contract.responseSize, body);
+            
+            if (buf.byteLength === 0) {
+                setStatus('Execution Failed: Empty Response');
+                return;
+            }
+
+            // Check for specific error codes (e.g., "DUP", "ER")
+            const text = new TextDecoder().decode(buf);
+            if (text === 'DUP') {
+                setStatus('Error: Username or Email already exists');
+                return;
+            }
+            if (text === 'ER') {
+                setStatus('Error: Server encountered an issue');
+                return;
+            }
+
             const decoded = parseBinary(buf, contract.resSchema);
             const newResult: ExecutionResult = {
                 id: contract.id,

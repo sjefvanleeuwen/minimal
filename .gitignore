@@ -18,6 +18,15 @@ dist-ssr/
 
 # Debug
 npm-debug.log*
+
+# Database
+*.db
+*.db-journal
+*.db-wal
+
+# Build
+server/build/
+api
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*

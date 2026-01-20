@@ -4,13 +4,46 @@ project(MinimalBinaryServer)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Download SQLite3 if not present
+# Download dependencies
 include(FetchContent)
+set(FETCHCONTENT_QUIET OFF) # Show download progress
+
+# SQLite3
 FetchContent_Declare(
     sqlite3
     URL https://www.sqlite.org/2024/sqlite-amalgamation-3470100.zip
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 FetchContent_MakeAvailable(sqlite3)
+
+# EnTT (Header-only ECS)
+# Using URL to avoid Git subbuild issues on some systems
+FetchContent_Declare(
+    entt
+    URL https://github.com/skypjack/entt/archive/refs/tags/v3.14.0.zip
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+
+# EnTT is header-only, we don't need to build its tests or tools
+set(ENTT_BUILD_TESTING OFF CACHE INTERNAL "")
+FetchContent_MakeAvailable(entt)
+
+# Jolt Physics
+FetchContent_Declare(
+    Jolt
+    URL https://github.com/jrouwe/JoltPhysics/archive/refs/tags/v5.2.0.zip
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR Build
+)
+set(TARGET_UNIT_TESTS OFF CACHE INTERNAL "")
+set(TARGET_SAMPLES OFF CACHE INTERNAL "")
+set(TARGET_HELLO_WORLD OFF CACHE INTERNAL "")
+set(TARGET_PERFORMANCE_TEST OFF CACHE INTERNAL "")
+set(USE_SSE4_1 ON CACHE INTERNAL "")
+set(USE_SSE4_2 ON CACHE INTERNAL "")
+set(USE_AVX ON CACHE INTERNAL "")
+set(GENERATE_DEBUG_SYMBOLS OFF CACHE INTERNAL "")
+FetchContent_MakeAvailable(Jolt)
 
 # Add SQLite3 library
 add_library(sqlite3_lib STATIC ${sqlite3_SOURCE_DIR}/sqlite3.c)
@@ -25,13 +58,32 @@ add_executable(server
     binary_web.h
     controllers/TestController.h
     controllers/UserController.h
+    controllers/PhysicsController.h
+    physics/PhysicsSystem.h
 )
 
-target_include_directories(server PRIVATE ${sqlite3_SOURCE_DIR} .)
-target_link_libraries(server PRIVATE sqlite3_lib)
+target_include_directories(server PRIVATE 
+    ${sqlite3_SOURCE_DIR} 
+    ${jolt_SOURCE_DIR}
+    .
+)
+
+target_link_libraries(server PRIVATE 
+    sqlite3_lib
+    EnTT::EnTT
+    Jolt
+)
 
 if(MSVC)
     target_compile_options(server PRIVATE /W4)
+    target_compile_definitions(server PRIVATE JPH_FLOATING_POINT_EXCEPTIONS_ENABLED)
 else()
-    target_compile_options(server PRIVATE -Wall -Wextra -Os)
+    target_compile_options(server PRIVATE -Wall -Wextra -Os -msse4.2)
+endif()
+
+# Jolt requires one of these to be defined
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(server PRIVATE JPH_DEBUG)
+else()
+    target_compile_definitions(server PRIVATE JPH_RELEASE)
 endif()

@@ -270,7 +270,7 @@ private:
                             if (send(client_fd, frame, frame_idx, MSG_NOSIGNAL) <= 0) break;
                             if (send(client_fd, p.data(), p.size(), MSG_NOSIGNAL) <= 0) break;
                             
-                            std::this_thread::sleep_for(std::chrono::seconds(1));
+                            std::this_thread::sleep_for(std::chrono::milliseconds(50)); // 20Hz updates
                         }
                         close(client_fd);
                     }).detach();

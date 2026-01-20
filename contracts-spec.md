@@ -23,6 +23,13 @@ Mapping of 1-byte Command IDs to logical service names.
 | `0x3F` | `'?'` | `Discovery` | Binary contract discovery | `EndpointContract[]` |
 | `0x31` | `'1'` | `GetWeatherForecast` | Returns current weather struct | `WeatherData` |
 | `0x32` | `'2'` | `GetSystemStatus` | Returns system health string | `FixedString` |
+| `0x34` | `'4'` | `RegisterUser` | Create new user with password | `u32:id\|str:name\|str:email` |
+| `0x4C` | `'L'` | `Login` | Auth via email/password | `u32:id\|str:name` |
+| `0x50` | `'P'` | `ChangePassword` | Update existing password | `c2:status` |
+| `0x35` | `'5'` | `GetUser` | Fetch user data by ID | `u32:id\|str:name\|str:email` |
+| `0x36` | `'6'` | `UpdateUser` | Update user metadata | `c2:status` |
+| `0x37` | `'7'` | `DeleteUser` | Remove user from system | `c2:status` |
+| `0x57` | `'W'` | `WorldStream` | Continuous sync of all entity transforms | `(u32,f32,f32,f32,f32,f32,f32,f32)[]` |
 
 ## 3. Data Schema (Binary Structs)
 Schemas are defined as fixed-width C-style structs to ensure zero-parser overhead for most calls. For dynamic data, we use a length-prefixed format. 
