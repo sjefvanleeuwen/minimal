@@ -4,6 +4,7 @@
 #include <string>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/epoll.h>
@@ -11,7 +12,10 @@
 #include <vector>
 #include <functional>
 #include <map>
+#include <set>
+#include <mutex>
 #include <cstring>
+#include <atomic>
 
 struct EndpointContract {
     char id;
@@ -84,12 +88,20 @@ public:
         for (int i = 0; i < threads_count; i++) {
             workers.emplace_back(&BinaryServer::run_worker, this);
         }
+        
+        // Start single broadcast thread for all stream clients
+        broadcast_running = true;
+        broadcast_thread = std::thread(&BinaryServer::run_broadcast, this);
     }
 
     void join() {
+        // Wait for workers first (they run forever until server shutdown)
         for (auto& t : workers) {
             if (t.joinable()) t.join();
         }
+        // Only stop broadcast thread after workers exit (during shutdown)
+        broadcast_running = false;
+        if (broadcast_thread.joinable()) broadcast_thread.join();
     }
 
 private:
@@ -98,6 +110,12 @@ private:
     std::map<char, std::function<std::string()>> streams;
     std::vector<std::thread> workers;
     std::vector<EndpointContract> contract_list;
+    
+    // Stream broadcast infrastructure
+    std::mutex stream_clients_mutex;
+    std::map<char, std::set<int>> stream_clients;  // cmd_id -> set of client fds
+    std::atomic<bool> broadcast_running{false};
+    std::thread broadcast_thread;
 
     void add_contract(char id, const char* name, uint32_t size, const char* req_schema, const char* res_schema, uint32_t type) {
         EndpointContract contract;
@@ -111,6 +129,90 @@ private:
         contract_list.push_back(contract);
     }
 
+    // Single broadcast thread handles all stream clients - no per-client threads
+    void run_broadcast() {
+        printf("[Server] Broadcast thread started, tracking %zu stream types\n", streams.size());
+        int tick = 0;
+        while (broadcast_running) {
+            tick++;
+            // For each stream type, get data once and broadcast to all clients
+            for (auto& [cmd_id, handler] : streams) {
+                // Check if we have any clients for this stream
+                size_t client_count = 0;
+                {
+                    std::lock_guard<std::mutex> lock(stream_clients_mutex);
+                    auto it = stream_clients.find(cmd_id);
+                    if (it != stream_clients.end()) {
+                        client_count = it->second.size();
+                    }
+                }
+                
+                if (client_count == 0) continue;  // No clients, skip this stream
+                
+                std::string payload = handler();
+                if (payload.empty()) {
+                    if (tick % 60 == 0) {  // Log every second
+                        printf("[Server] Stream %c has %zu clients but empty payload\n", cmd_id, client_count);
+                    }
+                    continue;
+                }
+                
+                if (tick % 60 == 0) {  // Log every second
+                    printf("[Server] Broadcasting %zu bytes to %zu clients for stream %c\n", 
+                           payload.size(), client_count, cmd_id);
+                }
+
+                // Build WebSocket frame once
+                std::vector<unsigned char> frame;
+                frame.push_back(0x82); // Binary frame
+                if (payload.size() <= 125) {
+                    frame.push_back((unsigned char)payload.size());
+                } else {
+                    frame.push_back(126); // 16-bit length
+                    frame.push_back((unsigned char)((payload.size() >> 8) & 0xFF));
+                    frame.push_back((unsigned char)(payload.size() & 0xFF));
+                }
+
+                // Broadcast to all clients for this stream
+                std::vector<int> dead_clients;
+                {
+                    std::lock_guard<std::mutex> lock(stream_clients_mutex);
+                    auto it = stream_clients.find(cmd_id);
+                    if (it != stream_clients.end()) {
+                        for (int fd : it->second) {
+                            // Non-blocking send - drop if client can't keep up
+                            ssize_t sent = send(fd, frame.data(), frame.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
+                            if (sent <= 0) {
+                                dead_clients.push_back(fd);
+                                continue;
+                            }
+                            sent = send(fd, payload.data(), payload.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
+                            if (sent <= 0) {
+                                dead_clients.push_back(fd);
+                            }
+                        }
+                    }
+                }
+
+                // Clean up dead clients
+                if (!dead_clients.empty()) {
+                    std::lock_guard<std::mutex> lock(stream_clients_mutex);
+                    auto it = stream_clients.find(cmd_id);
+                    if (it != stream_clients.end()) {
+                        for (int fd : dead_clients) {
+                            it->second.erase(fd);
+                            close(fd);
+                            printf("[Server] Removed dead stream client fd=%d\n", fd);
+                        }
+                    }
+                }
+            }
+            
+            std::this_thread::sleep_for(std::chrono::milliseconds(16)); // ~60Hz broadcast
+        }
+        printf("[Server] Broadcast thread stopped\n");
+    }
+
     void set_nonblocking(int fd) {
         int flags = fcntl(fd, F_GETFL, 0);
         fcntl(fd, F_SETFL, flags | O_NONBLOCK);
@@ -121,6 +223,7 @@ private:
         int opt = 1;
         setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
         setsockopt(server_fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
+        setsockopt(server_fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
 
         struct sockaddr_in address;
         address.sin_family = AF_INET;
@@ -255,33 +358,22 @@ private:
                 send(client_fd, handshake.data(), handshake.size(), 0);
 
                 if (streams.count(cmd_id)) {
-                    std::thread([this, client_fd, cmd_id]() {
-                        auto handler = streams[cmd_id];
-                        while (true) {
-                            std::string p = handler();
-                            if (p.empty()) break;
-
-                            unsigned char frame[4];
-                            int frame_idx = 0;
-                            frame[frame_idx++] = 0x82; // Binary frame
-
-                            if (p.size() <= 125) {
-                                frame[frame_idx++] = (unsigned char)p.size();
-                            } else {
-                                frame[frame_idx++] = 126; // 16-bit length
-                                frame[frame_idx++] = (unsigned char)((p.size() >> 8) & 0xFF);
-                                frame[frame_idx++] = (unsigned char)(p.size() & 0xFF);
-                            }
-
-                            if (send(client_fd, frame, frame_idx, MSG_NOSIGNAL) <= 0) break;
-                            if (send(client_fd, p.data(), p.size(), MSG_NOSIGNAL) <= 0) break;
-                            
-                            std::this_thread::sleep_for(std::chrono::milliseconds(50)); // 20Hz updates
-                        }
-                        close(client_fd);
-                    }).detach();
+                    // Set socket to non-blocking for broadcast
+                    set_nonblocking(client_fd);
                     
-                    // Connection is now owned by the stream thread
+                    // Enable TCP_NODELAY for low latency
+                    int opt = 1;
+                    setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
+                    
+                    // Add to broadcast list instead of spawning thread
+                    {
+                        std::lock_guard<std::mutex> lock(stream_clients_mutex);
+                        stream_clients[cmd_id].insert(client_fd);
+                        printf("[Server] Added stream client fd=%d for cmd=%c (total: %zu)\n", 
+                               client_fd, cmd_id, stream_clients[cmd_id].size());
+                    }
+                    
+                    // Remove from epoll - broadcast thread handles this now
                     epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
                     return;
                 }
