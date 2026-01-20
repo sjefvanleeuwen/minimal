@@ -1,16 +1,8 @@
 import { SceneNode } from './SceneNode';
-import { mat4, quat } from 'gl-matrix';
 
 export class RampNode extends SceneNode {
-    private width: number;
-    private height: number;
-    private depth: number;
-
     constructor(width: number, height: number, depth: number) {
         super();
-        this.width = width;
-        this.height = height;
-        this.depth = depth;
         this.scale = [width, height, depth];
         this.color = [0.7, 0.7, 0.7, 1.0]; // Gray Ramp
     }

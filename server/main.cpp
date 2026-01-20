@@ -5,6 +5,7 @@
 #include "physics/Components.h"
 #include "controllers/PhysicsController.h"
 #include "scene/SceneManager.h"
+#include "nodes/CrateNode.h"
 #include <chrono>
 #include <entt/entt.hpp>
 #include <atomic>
@@ -42,10 +43,14 @@ int main() {
         scene_manager.create_all(physics);
     }
 
+    // Create a crate wall (10 wide, 1 deep, 5 high)
+    CrateNode::create_stack(registry, physics, JPH::Vec3(-5, 0, 10), 10, 1, 5);
+
     // Start Physics Thread (60Hz)
     std::thread physics_thread([&]() {
         using clock = std::chrono::steady_clock;
         auto next_tick = clock::now();
+        int tick_counter = 0;
         
         while (running) {
             next_tick += std::chrono::nanoseconds(1000000000 / 60); // Precise 60Hz
@@ -98,11 +103,15 @@ int main() {
                     JPH::Quat rot = bi.GetRotation(phys.body_id);
                     updates.push_back({ent, pos.GetX(), pos.GetY(), pos.GetZ(), rot.GetX(), rot.GetY(), rot.GetZ(), rot.GetW()});
                     
-                    PhysicsSyncPayload p;
-                    p.entity_id = (uint32_t)ent;
-                    p.x = pos.GetX(); p.y = pos.GetY(); p.z = pos.GetZ();
-                    p.rx = rot.GetX(); p.ry = rot.GetY(); p.rz = rot.GetZ(); p.rw = rot.GetW();
-                    stream_payloads.push_back(p);
+                    // Only stream entities that are currently active in Jolt
+                    // This dramatically reduces bandwidth for stable/stacked boxes
+                    if (bi.IsActive(phys.body_id)) {
+                        PhysicsSyncPayload p;
+                        p.entity_id = (uint32_t)ent;
+                        p.x = pos.GetX(); p.y = pos.GetY(); p.z = pos.GetZ();
+                        p.rx = rot.GetX(); p.ry = rot.GetY(); p.rz = rot.GetZ(); p.rw = rot.GetW();
+                        stream_payloads.push_back(p);
+                    }
                 }
 
                 for (const auto& u : updates) {
@@ -115,6 +124,11 @@ int main() {
             // 5. Push to lockless stream buffer
             if (!stream_payloads.empty()) {
                 world_state.update(std::string(reinterpret_cast<const char*>(stream_payloads.data()), stream_payloads.size() * sizeof(PhysicsSyncPayload)));
+            }
+
+            // Debug: Log active entity count every 120 ticks (2 seconds)
+            if (++tick_counter % 120 == 0) {
+                printf("[Main] Streaming %zu active entities (out of %zu total)\n", stream_payloads.size(), updates.size());
             }
 
             std::this_thread::sleep_until(next_tick);

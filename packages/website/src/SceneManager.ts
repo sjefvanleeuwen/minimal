@@ -2,17 +2,17 @@ import { mat4, vec3, quat } from 'gl-matrix';
 import { SceneNode } from './nodes/SceneNode';
 import { GroundNode } from './nodes/GroundNode';
 import { SphereNode } from './nodes/SphereNode';
+import { CubeNode } from './nodes/CubeNode';
 import { RampNode } from './nodes/RampNode';
 import { DynamicBinaryClient } from './DynamicBinaryClient';
 
 export class SceneManager {
     public nodes: SceneNode[] = [];
-    public sphere: SphereNode | null = null;
-    private spheres = new Map<number, SphereNode>();
+    public sphere: SceneNode | null = null;
+    private spheres = new Map<number, SceneNode>();
     private serverEntityId: number | null = null;
     private keys: Record<string, boolean> = {};
     private client: DynamicBinaryClient;
-    private streamCleanup?: () => void;
     private lastDx = 0;
     private lastDz = 0;
 
@@ -25,17 +25,13 @@ export class SceneManager {
         
         // 1. Fetch assets first
         this.loadServerAssets().then(async () => {
-            // 2. Fetch existing entities info
+            // 2. Fetch existing entities info (updates metadataCache and creates initial nodes)
             await this.refreshEntityMetadata();
 
             // 3. Join the game
             this.client.call('J', 0, new ArrayBuffer(0)).then(resp => {
                 const view = new DataView(resp);
                 this.serverEntityId = view.getUint32(0, true);
-                const r = view.getFloat32(4, true);
-                const g = view.getFloat32(8, true);
-                const b = view.getFloat32(12, true);
-                const a = view.getFloat32(16, true);
                 
                 console.log(`[SceneManager] Joined game. My ID: ${this.serverEntityId}`);
                 
@@ -48,21 +44,37 @@ export class SceneManager {
         try {
             const resp = await this.client.call('E', 0, new ArrayBuffer(0));
             const view = new DataView(resp);
-            const entrySize = 20; // ID(4) + Color(16)
+            const entrySize = 48; // ID(4) + Trans(28) + Color(16)
             for (let i = 0; i < resp.byteLength; i += entrySize) {
                 const id = view.getUint32(i, true);
-                const r = view.getFloat32(i + 4, true);
-                const g = view.getFloat32(i + 8, true);
-                const b = view.getFloat32(i + 12, true);
-                const a = view.getFloat32(i + 16, true);
                 
-                let sphere = this.spheres.get(id);
-                if (sphere) {
-                    sphere.color = [r, g, b, a];
-                } else {
-                    // Pre-cache the color for when we see it in the stream
-                    this.metadataCache.set(id, [r, g, b, a]);
+                // Get the transform data from the initial sync
+                const px = view.getFloat32(i + 4, true);
+                const py = view.getFloat32(i + 8, true);
+                const pz = view.getFloat32(i + 12, true);
+                const rx = view.getFloat32(i + 16, true);
+                const ry = view.getFloat32(i + 20, true);
+                const rz = view.getFloat32(i + 24, true);
+                const rw = view.getFloat32(i + 28, true);
+
+                const r = view.getFloat32(i + 32, true);
+                const g = view.getFloat32(i + 36, true);
+                const b = view.getFloat32(i + 40, true);
+                const a = view.getFloat32(i + 44, true);
+                
+                let node = this.spheres.get(id);
+                if (!node) {
+                    node = new CubeNode(1.0);
+                    this.spheres.set(id, node);
+                    this.nodes.push(node);
                 }
+                
+                node.color = [r, g, b, a];
+                vec3.set(node.position, px, py, pz);
+                quat.set(node.rotation, rx, ry, rz, rw);
+
+                // Pre-cache for any future stream updates
+                this.metadataCache.set(id, [r, g, b, a]);
             }
         } catch (e) {
             console.warn("[SceneManager] Failed to refresh entity metadata", e);
@@ -114,7 +126,7 @@ export class SceneManager {
 
     private startNetworkSync() {
         console.log("[SceneManager] Subscribing to WorldStream...");
-        this.streamCleanup = this.client.subscribe('W', (data) => {
+        this.client.subscribe('W', (data) => {
             const view = new DataView(data);
             const entrySize = 32; // 4 (ID) + 12 (Pos) + 16 (Rot)
             
@@ -134,42 +146,36 @@ export class SceneManager {
                 const rz = view.getFloat32(i + 24, true);
                 const rw = view.getFloat32(i + 28, true);
 
-                let sphere = this.spheres.get(entityId);
-                if (!sphere) {
-                    console.log(`[SceneManager] New sphere discovered: ${entityId}`);
-                    sphere = new SphereNode(1.0);
+                let node = this.spheres.get(entityId);
+                if (!node) {
+                    console.log(`[SceneManager] New entity discovered: ${entityId}`);
+                    
+                    if (entityId === this.serverEntityId) {
+                        node = new SphereNode(1.0);
+                        this.sphere = node;
+                    } else {
+                        node = new CubeNode(1.0);
+                    }
                     
                     // Use cached color or request one
                     const cachedColor = this.metadataCache.get(entityId);
                     if (cachedColor) {
-                        sphere.color = cachedColor;
+                        node.color = cachedColor;
                     } else {
-                        // Request metadata for unknown entity
                         this.refreshEntityMetadata();
                     }
 
-                    this.spheres.set(entityId, sphere);
-                    this.nodes.push(sphere);
-                    
-                    if (entityId === this.serverEntityId) {
-                        this.sphere = sphere;
-                    }
+                    this.spheres.set(entityId, node);
+                    this.nodes.push(node);
                 }
 
-                // Update sphere from server state
-                vec3.set(sphere.position, px, py, pz);
-                quat.set(sphere.rotation, rx, ry, rz, rw);
+                // Update node from server state
+                vec3.set(node.position, px, py, pz);
+                quat.set(node.rotation, rx, ry, rz, rw);
             }
 
-            // Optional: Cleanup spheres that are no longer in the stream
-            for (const [id, sphere] of this.spheres.entries()) {
-                if (!seenIds.has(id)) {
-                    console.log(`[SceneManager] Sphere removed: ${id}`);
-                    this.nodes = this.nodes.filter(n => n !== sphere);
-                    this.spheres.delete(id);
-                    if (id === this.serverEntityId) this.sphere = null;
-                }
-            }
+            // Note: We don't delete immediately because stationary objects stop broadcasting
+            // In a production environment, we'd use a separate LifeCycle/Event system.
         });
     }
 

@@ -121,14 +121,22 @@ public:
         return body_id;
     }
 
-    JPH::BodyID CreateBox(JPH::Vec3 position, JPH::Vec3 half_extent, JPH::EMotionType motion_type, JPH::ObjectLayer layer, JPH::Quat rotation = JPH::Quat::sIdentity()) {
+    JPH::BodyID CreateBox(JPH::Vec3 position, JPH::Vec3 half_extent, JPH::EMotionType motion_type, JPH::ObjectLayer layer, JPH::Quat rotation = JPH::Quat::sIdentity(), float friction = 1.0f, float mass = 1000.0f) {
         JPH::BodyInterface &body_interface = physics_system.GetBodyInterface();
         JPH::BoxShapeSettings shape_settings(half_extent);
         JPH::ShapeSettings::ShapeResult result = shape_settings.Create();
         JPH::ShapeRefC shape = result.Get();
 
         JPH::BodyCreationSettings settings(shape, position, rotation, motion_type, layer);
-        settings.mFriction = 1.0f; // High friction for the floors/ramps
+        settings.mFriction = friction;
+        settings.mRestitution = 0.1f;
+        settings.mLinearDamping = 0.1f;
+        settings.mAngularDamping = 0.2f;
+        
+        if (motion_type == JPH::EMotionType::Dynamic) {
+            settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+            settings.mMassPropertiesOverride.mMass = mass;
+        }
         
         JPH::BodyID body_id = body_interface.CreateAndAddBody(settings, JPH::EActivation::Activate);
         return body_id;

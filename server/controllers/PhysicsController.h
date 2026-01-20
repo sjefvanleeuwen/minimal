@@ -18,6 +18,8 @@ struct PhysicsSyncPayload {
 
 struct EntityMetadata {
     uint32_t entity_id;
+    float x, y, z;
+    float rx, ry, rz, rw;
     float r, g, b, a;
 } __attribute__((packed));
 
@@ -40,14 +42,20 @@ public:
             return scene.get_raw_json();
         });
 
-        // Get Entities Info 'E' - Returns metadata (colors) for all entities
+        // Get Entities Info 'E' - Returns full state (positions + colors) for all entities
         server.register_command('E', "GetEntitiesInfo", 0, "", "metadata[]", [&registry](int, const std::string& input) {
             std::lock_guard<std::mutex> lock(registry_mutex);
-            auto view = registry.view<ColorComponent>();
+            auto view = registry.view<TransformComponent, ColorComponent>();
             std::vector<EntityMetadata> metas;
             for (auto entity : view) {
+                auto &trans = view.get<TransformComponent>(entity);
                 auto &col = view.get<ColorComponent>(entity);
-                metas.push_back({(uint32_t)entity, col.r, col.g, col.b, col.a});
+                metas.push_back({
+                    (uint32_t)entity, 
+                    trans.x, trans.y, trans.z, 
+                    trans.rx, trans.ry, trans.rz, trans.rw,
+                    col.r, col.g, col.b, col.a
+                });
             }
             return std::string(reinterpret_cast<const char*>(metas.data()), metas.size() * sizeof(EntityMetadata));
         });
@@ -67,7 +75,13 @@ public:
             }
 
             auto& col = registry.get<ColorComponent>(entity);
-            EntityMetadata meta = {(uint32_t)entity, col.r, col.g, col.b, col.a};
+            auto& trans = registry.get<TransformComponent>(entity);
+            EntityMetadata meta = {
+                (uint32_t)entity, 
+                trans.x, trans.y, trans.z, 
+                trans.rx, trans.ry, trans.rz, trans.rw,
+                col.r, col.g, col.b, col.a
+            };
             return std::string(reinterpret_cast<const char*>(&meta), sizeof(EntityMetadata));
         });
 

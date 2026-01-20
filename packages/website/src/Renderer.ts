@@ -1,6 +1,7 @@
 import { mat4 } from 'gl-matrix';
 import { SceneNode } from './nodes/SceneNode';
-import { SphereNode } from './nodes/SphereNode';
+import { GroundNode } from './nodes/GroundNode';
+import { RampNode } from './nodes/RampNode';
 import { ShaderEngine } from './ShaderEngine';
 import shaderSourceRaw from './shaders/default.wgsl?raw';
 
@@ -168,8 +169,11 @@ export class Renderer {
             this.uniformData.set(this.modelMatrix, 16);
             this.uniformData.set(node.color, 32);
             
-            // nodeType: 0 = Ground/Ramp, 1 = Sphere
-            const nodeType = (node instanceof SphereNode) ? 1.0 : 0.0;
+            // nodeType: 0 = Static (World Checker), 1 = Dynamic (Local Checker)
+            let nodeType = 1.0;
+            if (node instanceof GroundNode || node instanceof RampNode) {
+                nodeType = 0.0;
+            }
             this.uniformData[36] = nodeType;
 
             // Submit update to node's private buffer
