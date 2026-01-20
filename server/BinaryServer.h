@@ -26,7 +26,7 @@ class BinaryServer {
 public:
     BinaryServer(int port) : port(port) {}
 
-    void register_command(char command_id, const char* name, uint32_t size, const char* req_schema, const char* res_schema, std::function<std::string(const std::string&)> handler) {
+    void register_command(char command_id, const char* name, uint32_t size, const char* req_schema, const char* res_schema, std::function<std::string(int, const std::string&)> handler) {
         commands[command_id] = handler;
         add_contract(command_id, name, size, req_schema, res_schema, 0);
     }
@@ -34,6 +34,10 @@ public:
     void register_stream(char command_id, const char* name, uint32_t size, const char* schema, std::function<std::string()> handler) {
         streams[command_id] = handler;
         add_contract(command_id, name, size, "", schema, 1);
+    }
+
+    void on_disconnect(std::function<void(int)> callback) {
+        disconnect_callback = callback;
     }
 
     void start() {
@@ -61,8 +65,9 @@ public:
 
 private:
     int port;
-    std::map<char, std::function<std::string(const std::string&)>> commands;
+    std::map<char, std::function<std::string(int, const std::string&)>> commands;
     std::map<char, std::function<std::string()>> streams;
+    std::function<void(int)> disconnect_callback;
     std::vector<std::thread> workers;
     std::vector<EndpointContract> contract_list;
     
@@ -147,6 +152,7 @@ private:
                     if (it != stream_clients.end()) {
                         for (int fd : dead_clients) {
                             it->second.erase(fd);
+                            if (disconnect_callback) disconnect_callback(fd);
                             close(fd);
                         }
                     }
@@ -221,11 +227,13 @@ private:
             ssize_t bytes = recv(client_fd, buffer, sizeof(buffer) - 1, MSG_DONTWAIT);
             if (bytes < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) break; // Done for now
+                if (disconnect_callback) disconnect_callback(client_fd);
                 epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
                 close(client_fd);
                 return;
             }
             if (bytes == 0) {
+                if (disconnect_callback) disconnect_callback(client_fd);
                 epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
                 close(client_fd);
                 return;
@@ -292,7 +300,7 @@ private:
                 body.assign(reinterpret_cast<const char*>(contract_list.data()), contract_list.size() * sizeof(EndpointContract));
                 found = true;
             } else if (commands.count(cmd_id)) {
-                body = commands[cmd_id](body_input);
+                body = commands[cmd_id](client_fd, body_input);
                 found = true;
             }
 

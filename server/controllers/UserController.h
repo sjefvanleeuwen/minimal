@@ -26,7 +26,7 @@ public:
 
     static void register_routes(BinaryServer& node, DbState& state) {
         // CREATE: Register User (ID '4')
-        node.register_command('4', "RegisterUser", 0, "str:name|str:email|str:password", "u32:id|str:name|str:email", [&state](const std::string& data) -> std::string {
+        node.register_command('4', "RegisterUser", 0, "str:name|str:email|str:password", "u32:id|str:name|str:email", [&state](int, const std::string& data) -> std::string {
             size_t offset = 0;
             std::string name = read_str(data, offset);
             std::string email = read_str(data, offset);
@@ -69,7 +69,7 @@ public:
         });
 
         // LOGIN: Login User (ID 'L')
-        node.register_command('L', "Login", 0, "str:email|str:password", "u32:id|str:name", [&state](const std::string& data) -> std::string {
+        node.register_command('L', "Login", 0, "str:email|str:password", "u32:id|str:name", [&state](int, const std::string& data) -> std::string {
             size_t offset = 0;
             std::string email = read_str(data, offset);
             std::string password = read_str(data, offset);
@@ -101,7 +101,7 @@ public:
         });
 
         // UPDATE: Change Password (ID 'P')
-        node.register_command('P', "ChangePassword", 2, "u32:id|str:old_pass|str:new_pass", "c2:status", [&state](const std::string& data) -> std::string {
+        node.register_command('P', "ChangePassword", 2, "u32:id|str:old_pass|str:new_pass", "c2:status", [&state](int, const std::string& data) -> std::string {
             size_t offset = 0;
             if (data.size() < 4) return "ER";
             uint32_t id = *reinterpret_cast<const uint32_t*>(data.data() + offset);
@@ -123,7 +123,7 @@ public:
         });
 
         // READ: Get User (ID '5')
-        node.register_command('5', "GetUser", 0, "u32:id", "u32:id|str:name|str:email", [&state](const std::string& data) -> std::string {
+        node.register_command('5', "GetUser", 0, "u32:id", "u32:id|str:name|str:email", [&state](int, const std::string& data) -> std::string {
             if (data.size() < 4) return "";
             uint32_t id = *reinterpret_cast<const uint32_t*>(data.data());
             
@@ -146,7 +146,7 @@ public:
         });
 
         // UPDATE: Update User (ID '6')
-        node.register_command('6', "UpdateUser", 2, "u32:id|str:name|str:email", "c2:status", [&state](const std::string& data) -> std::string {
+        node.register_command('6', "UpdateUser", 2, "u32:id|str:name|str:email", "c2:status", [&state](int, const std::string& data) -> std::string {
             size_t offset = 0;
             if (data.size() < 4) return "ER";
             uint32_t id = *reinterpret_cast<const uint32_t*>(data.data());
@@ -166,7 +166,7 @@ public:
         });
 
         // DELETE: Delete User (ID '7')
-        node.register_command('7', "DeleteUser", 2, "u32:id", "c2:status", [&state](const std::string& data) -> std::string {
+        node.register_command('7', "DeleteUser", 2, "u32:id", "c2:status", [&state](int, const std::string& data) -> std::string {
             if (data.size() < 4) return "ER";
             uint32_t id = *reinterpret_cast<const uint32_t*>(data.data());
             
@@ -181,7 +181,7 @@ public:
         });
 
         // LIST ALL: Debugging helper (ID 'A')
-        node.register_command('A', "ListUsers", 0, "", "str:user_list", [&state](const std::string&) -> std::string {
+        node.register_command('A', "ListUsers", 0, "", "str:user_list", [&state](int, const std::string&) -> std::string {
             sqlite3_stmt* stmt;
             sqlite3_prepare_v2(state.db, "SELECT id, name, email FROM users;", -1, &stmt, nullptr);
             

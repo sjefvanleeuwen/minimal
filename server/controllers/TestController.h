@@ -25,7 +25,7 @@ class TestController {
 public:
     static void register_routes(BinaryServer& node, DbState& state, std::chrono::steady_clock::time_point start_time) {
         // Register Binary Command '1' (Weather Forecast)
-        node.register_command('1', "GetWeatherForecast", sizeof(WeatherData), "", "u32:date|i32:temp|c16:summary", [&state](const std::string&) -> std::string {
+        node.register_command('1', "GetWeatherForecast", sizeof(WeatherData), "", "u32:date|i32:temp|c16:summary", [&state](int, const std::string&) -> std::string {
             sqlite3_exec(state.db, "UPDATE stats SET hits = hits + 1 WHERE id = 1;", nullptr, nullptr, nullptr);
             
             WeatherData data = { 20260120, 22, "Chilly" };
@@ -33,7 +33,7 @@ public:
         });
 
         // Register Binary Command '2' (System Status)
-        node.register_command('2', "GetSystemStatus", 2, "", "c2:status", [](const std::string&) -> std::string {
+        node.register_command('2', "GetSystemStatus", 2, "", "c2:status", [](int, const std::string&) -> std::string {
             return "OK";
         });
 
