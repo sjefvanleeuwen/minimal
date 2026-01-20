@@ -12,6 +12,10 @@ struct PhysicsSyncPayload {
     uint32_t entity_id;
     float x, y, z;
     float rx, ry, rz, rw;
+} __attribute__((packed));
+
+struct EntityMetadata {
+    uint32_t entity_id;
     float r, g, b, a;
 } __attribute__((packed));
 
@@ -30,8 +34,20 @@ public:
             return scene.get_raw_json();
         });
 
+        // Get Entities Info 'E' - Returns metadata (colors) for all entities
+        server.register_command('E', "GetEntitiesInfo", 0, "", "metadata[]", [&registry](const std::string& input) {
+            std::lock_guard<std::mutex> lock(registry_mutex);
+            auto view = registry.view<ColorComponent>();
+            std::vector<EntityMetadata> metas;
+            for (auto entity : view) {
+                auto &col = view.get<ColorComponent>(entity);
+                metas.push_back({(uint32_t)entity, col.r, col.g, col.b, col.a});
+            }
+            return std::string(reinterpret_cast<const char*>(metas.data()), metas.size() * sizeof(EntityMetadata));
+        });
+
         // Join Game 'J' - Spawn a new sphere
-        server.register_command('J', "JoinGame", 0, "", "u32", [&registry, &physics](const std::string& input) {
+        server.register_command('J', "JoinGame", 0, "", "metadata", [&registry, &physics](const std::string& input) {
             std::lock_guard<std::mutex> lock(registry_mutex);
             auto entity = registry.create();
             
@@ -46,8 +62,8 @@ public:
             registry.emplace<InputComponent>(entity, 0.0f, 0.0f, 0.0f);
             registry.emplace<ColorComponent>(entity, r, g, b, 1.0f);
             
-            uint32_t id = (uint32_t)entity;
-            return std::string(reinterpret_cast<const char*>(&id), 4);
+            EntityMetadata meta = {(uint32_t)entity, r, g, b, 1.0f};
+            return std::string(reinterpret_cast<const char*>(&meta), sizeof(EntityMetadata));
         });
 
         // Move Entity 'M' - Update Input State
@@ -80,18 +96,15 @@ public:
                 return std::string("");  // Skip this frame if registry is busy
             }
             
-            auto view = registry.view<TransformComponent, ColorComponent>();
+            auto view = registry.view<TransformComponent>();
             std::vector<PhysicsSyncPayload> updates;
-            updates.reserve(view.size_hint());
             
             for (auto entity : view) {
                 auto &trans = view.get<TransformComponent>(entity);
-                auto &col = view.get<ColorComponent>(entity);
                 PhysicsSyncPayload p;
                 p.entity_id = (uint32_t)entity;
                 p.x = trans.x; p.y = trans.y; p.z = trans.z;
                 p.rx = trans.rx; p.ry = trans.ry; p.rz = trans.rz; p.rw = trans.rw;
-                p.r = col.r; p.g = col.g; p.b = col.b; p.a = col.a;
                 updates.push_back(p);
             }
 

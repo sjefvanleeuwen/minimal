@@ -23,17 +23,53 @@ export class SceneManager {
         // Simple binary client
         this.client = new DynamicBinaryClient(window.location.hostname === 'localhost' ? '127.0.0.1' : window.location.hostname, 8081);
         
-        // 1. Fetch assets first, then join
-        this.loadServerAssets().then(() => {
-            // 2. Join the game
+        // 1. Fetch assets first
+        this.loadServerAssets().then(async () => {
+            // 2. Fetch existing entities info
+            await this.refreshEntityMetadata();
+
+            // 3. Join the game
             this.client.call('J', 0, new ArrayBuffer(0)).then(resp => {
                 const view = new DataView(resp);
                 this.serverEntityId = view.getUint32(0, true);
-                console.log(`[SceneManager] Joined game. My Entity ID: ${this.serverEntityId}`);
+                const r = view.getFloat32(4, true);
+                const g = view.getFloat32(8, true);
+                const b = view.getFloat32(12, true);
+                const a = view.getFloat32(16, true);
+                
+                console.log(`[SceneManager] Joined game. My ID: ${this.serverEntityId}`);
+                
                 this.startNetworkSync();
             });
         });
     }
+
+    private async refreshEntityMetadata() {
+        try {
+            const resp = await this.client.call('E', 0, new ArrayBuffer(0));
+            const view = new DataView(resp);
+            const entrySize = 20; // ID(4) + Color(16)
+            for (let i = 0; i < resp.byteLength; i += entrySize) {
+                const id = view.getUint32(i, true);
+                const r = view.getFloat32(i + 4, true);
+                const g = view.getFloat32(i + 8, true);
+                const b = view.getFloat32(i + 12, true);
+                const a = view.getFloat32(i + 16, true);
+                
+                let sphere = this.spheres.get(id);
+                if (sphere) {
+                    sphere.color = [r, g, b, a];
+                } else {
+                    // Pre-cache the color for when we see it in the stream
+                    this.metadataCache.set(id, [r, g, b, a]);
+                }
+            }
+        } catch (e) {
+            console.warn("[SceneManager] Failed to refresh entity metadata", e);
+        }
+    }
+
+    private metadataCache = new Map<number, [number, number, number, number]>();
 
     private async loadServerAssets() {
         console.log("[SceneManager] Fetching Server Asset Manifest ('A')...");
@@ -80,7 +116,7 @@ export class SceneManager {
         console.log("[SceneManager] Subscribing to WorldStream...");
         this.streamCleanup = this.client.subscribe('W', (data) => {
             const view = new DataView(data);
-            const entrySize = 48; // 4 (ID) + 12 (Pos) + 16 (Rot) + 16 (Color)
+            const entrySize = 32; // 4 (ID) + 12 (Pos) + 16 (Rot)
             
             // Keep track of which entities we saw this frame
             const seenIds = new Set<number>();
@@ -98,20 +134,23 @@ export class SceneManager {
                 const rz = view.getFloat32(i + 24, true);
                 const rw = view.getFloat32(i + 28, true);
 
-                const cr = view.getFloat32(i + 32, true);
-                const cg = view.getFloat32(i + 36, true);
-                const cb = view.getFloat32(i + 40, true);
-                const ca = view.getFloat32(i + 44, true);
-
                 let sphere = this.spheres.get(entityId);
                 if (!sphere) {
                     console.log(`[SceneManager] New sphere discovered: ${entityId}`);
                     sphere = new SphereNode(1.0);
-                    sphere.color = [cr, cg, cb, ca];
+                    
+                    // Use cached color or request one
+                    const cachedColor = this.metadataCache.get(entityId);
+                    if (cachedColor) {
+                        sphere.color = cachedColor;
+                    } else {
+                        // Request metadata for unknown entity
+                        this.refreshEntityMetadata();
+                    }
+
                     this.spheres.set(entityId, sphere);
                     this.nodes.push(sphere);
                     
-                    // If this is OUR sphere, set the main reference for camera follow
                     if (entityId === this.serverEntityId) {
                         this.sphere = sphere;
                     }

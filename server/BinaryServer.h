@@ -87,9 +87,15 @@ private:
     // Single broadcast thread handles all stream clients - no per-client threads
     void run_broadcast() {
         printf("[Server] Broadcast thread started, tracking %zu stream types\n", streams.size());
-        int tick = 0;
+        
+        using clock = std::chrono::steady_clock;
+        auto next_tick = clock::now();
+        int tick_counter = 0;
+
         while (broadcast_running) {
-            tick++;
+            next_tick += std::chrono::milliseconds(16); // 60Hz target
+            tick_counter++;
+
             // For each stream type, get data once and broadcast to all clients
             for (auto& [cmd_id, handler] : streams) {
                 // Get snapshot of client fds (quick lock)
@@ -104,18 +110,13 @@ private:
                 
                 if (clients_snapshot.empty()) continue;  // No clients, skip this stream
                 
-                // Get payload (this may lock registry_mutex, but we're not holding stream_clients_mutex)
+                // Get payload 
                 std::string payload = handler();
-                if (payload.empty()) {
-                    if (tick % 60 == 0) {
-                        printf("[Server] Stream %c has %zu clients but empty payload\n", cmd_id, clients_snapshot.size());
-                    }
-                    continue;
-                }
+                if (payload.empty()) continue;
                 
-                if (tick % 60 == 0) {
-                    printf("[Server] Broadcasting %zu bytes to %zu clients for stream %c\n", 
-                           payload.size(), clients_snapshot.size(), cmd_id);
+                if (tick_counter % 60 == 0) {
+                    printf("[Server] Stream %c: %zu bytes to %zu clients\n", 
+                           cmd_id, payload.size(), clients_snapshot.size());
                 }
 
                 // Build WebSocket frame once
@@ -124,19 +125,21 @@ private:
                 // Broadcast to all clients (no lock held during sends!)
                 std::vector<int> dead_clients;
                 for (int fd : clients_snapshot) {
-                    // Non-blocking send - drop if client can't keep up
+                    // Non-blocking send - skip if client can't keep up
                     ssize_t sent = send(fd, frame.data(), frame.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
                     if (sent <= 0) {
+                        if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) continue; 
                         dead_clients.push_back(fd);
                         continue;
                     }
                     sent = send(fd, payload.data(), payload.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
                     if (sent <= 0) {
+                        if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) continue;
                         dead_clients.push_back(fd);
                     }
                 }
 
-                // Clean up dead clients (quick lock)
+                // Clean up dead clients
                 if (!dead_clients.empty()) {
                     std::lock_guard<std::mutex> lock(stream_clients_mutex);
                     auto it = stream_clients.find(cmd_id);
@@ -144,13 +147,13 @@ private:
                         for (int fd : dead_clients) {
                             it->second.erase(fd);
                             close(fd);
-                            printf("[Server] Removed dead stream client fd=%d\n", fd);
                         }
                     }
                 }
             }
             
-            std::this_thread::sleep_for(std::chrono::milliseconds(16)); // ~60Hz broadcast
+            // Wait until next tick - more precise than sleep_for(16)
+            std::this_thread::sleep_until(next_tick);
         }
         printf("[Server] Broadcast thread stopped\n");
     }
@@ -172,29 +175,39 @@ private:
         address.sin_addr.s_addr = INADDR_ANY;
         address.sin_port = htons(port);
 
-        bind(server_fd, (struct sockaddr *)&address, sizeof(address));
-        listen(server_fd, 100);
+        if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+            perror("bind failed");
+            return;
+        }
+        listen(server_fd, 1024);
         set_nonblocking(server_fd);
 
         int epoll_fd = epoll_create1(0);
-        struct epoll_event ev, events[64];
+        struct epoll_event ev, events[1024];
         ev.events = EPOLLIN;
         ev.data.fd = server_fd;
         epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &ev);
 
         while (true) {
-            int nfds = epoll_wait(epoll_fd, events, 64, -1);
+            int nfds = epoll_wait(epoll_fd, events, 1024, -1);
             for (int n = 0; n < nfds; ++n) {
                 if (events[n].data.fd == server_fd) {
-                    int client_fd = accept(server_fd, nullptr, nullptr);
-                    if (client_fd >= 0) {
-                        set_nonblocking(client_fd);
-                        ev.events = EPOLLIN | EPOLLET;
-                        ev.data.fd = client_fd;
-                        epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev);
+                    while (true) {
+                        int client_fd = accept(server_fd, nullptr, nullptr);
+                        if (client_fd >= 0) {
+                            set_nonblocking(client_fd);
+                            ev.events = EPOLLIN | EPOLLET;
+                            ev.data.fd = client_fd;
+                            epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev);
+                        } else {
+                            break; // All pending connections handled
+                        }
                     }
-                } else {
+                } else if (events[n].events & EPOLLIN) {
                     handle_client(events[n].data.fd, epoll_fd);
+                } else if (events[n].events & (EPOLLERR | EPOLLHUP)) {
+                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, events[n].data.fd, nullptr);
+                    close(events[n].data.fd);
                 }
             }
         }
