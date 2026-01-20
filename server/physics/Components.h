@@ -23,4 +23,8 @@ struct ColorComponent {
     float r, g, b, a;
 };
 
+struct PlayerComponent {
+    int fd;
+};
+
 #endif

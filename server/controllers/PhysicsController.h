@@ -5,6 +5,7 @@
 #include "../physics/PhysicsSystem.h"
 #include "../physics/Components.h"
 #include "../scene/SceneManager.h"
+#include "../nodes/PlayerNode.h"
 #include <entt/entt.hpp>
 #include <vector>
 #include "../core/SharedState.h"
@@ -51,31 +52,22 @@ public:
             return std::string(reinterpret_cast<const char*>(metas.data()), metas.size() * sizeof(EntityMetadata));
         });
 
-        // Join Game 'J' - Spawn a new sphere
+        // Join Game 'J' - Spawn a new player node
         // Associate the joining player with their connection FD
         server.register_command('J', "JoinGame", 0, "", "metadata", [&registry, &physics](int fd, const std::string& input) {
             std::lock_guard<std::mutex> lock(registry_mutex);
-            auto entity = registry.create();
             
-            // Random color for the sphere
-            float r = (float)(rand() % 100) / 100.0f;
-            float g = (float)(rand() % 100) / 100.0f;
-            float b = (float)(rand() % 100) / 100.0f;
-            
-            auto body_id = physics.CreateSphere(JPH::Vec3(0, 5, 0), 1.0f, JPH::EMotionType::Dynamic, Layers::MOVING);
-            registry.emplace<PhysicsComponent>(entity, body_id);
-            registry.emplace<TransformComponent>(entity, 0.0f, 5.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
-            registry.emplace<InputComponent>(entity, 0.0f, 0.0f, 0.0f);
-            registry.emplace<ColorComponent>(entity, r, g, b, 1.0f);
+            auto entity = PlayerNode::create(registry, physics, fd);
             
             // Map the FD to the entity for robust cleanup
             {
                 std::lock_guard<std::mutex> fd_lock(fd_map_mutex);
                 fd_to_entity[fd] = entity;
-                printf("[PhysicsController] Mapped fd %d to entity %u\n", fd, (uint32_t)entity);
+                printf("[PhysicsController] Mapped fd %d to player entity %u\n", fd, (uint32_t)entity);
             }
 
-            EntityMetadata meta = {(uint32_t)entity, r, g, b, 1.0f};
+            auto& col = registry.get<ColorComponent>(entity);
+            EntityMetadata meta = {(uint32_t)entity, col.r, col.g, col.b, col.a};
             return std::string(reinterpret_cast<const char*>(&meta), sizeof(EntityMetadata));
         });
 
@@ -121,16 +113,10 @@ public:
             std::lock_guard<std::mutex> fd_lock(fd_map_mutex);
             if (fd_to_entity.count(fd)) {
                 auto entity = fd_to_entity[fd];
-                printf("[PhysicsController] Cleaning up entity %u for disconnected fd %d\n", (uint32_t)entity, fd);
+                printf("[PhysicsController] Cleaning up player entity %u for disconnected fd %d\n", (uint32_t)entity, fd);
                 
                 std::lock_guard<std::mutex> reg_lock(registry_mutex);
-                if (registry.valid(entity)) {
-                    if (auto* pc = registry.try_get<PhysicsComponent>(entity)) {
-                        physics.GetBodyInterface().RemoveBody(pc->body_id);
-                        physics.GetBodyInterface().DestroyBody(pc->body_id);
-                    }
-                    registry.destroy(entity);
-                }
+                PlayerNode::destroy(registry, physics, entity);
                 fd_to_entity.erase(fd);
             }
         });
