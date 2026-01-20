@@ -36,7 +36,28 @@ export class SceneManager {
                 console.log(`[SceneManager] Joined game. My ID: ${this.serverEntityId}`);
                 
                 this.startNetworkSync();
+                this.startStatsSync();
             });
+        });
+    }
+
+    private startStatsSync() {
+        this.client.subscribe('S', (payload: ArrayBuffer) => {
+            const view = new DataView(payload);
+            const active = view.getUint32(0, true);
+            const total = view.getUint32(4, true);
+            const clients = view.getUint32(8, true);
+            const packets = view.getBigUint64(16, true);
+            
+            const elActive = document.getElementById('stats-active');
+            const elTotal = document.getElementById('stats-total');
+            const elClients = document.getElementById('stats-clients');
+            const elPackets = document.getElementById('stats-packets');
+            
+            if (elActive) elActive.textContent = active.toString();
+            if (elTotal) elTotal.textContent = total.toString();
+            if (elClients) elClients.textContent = clients.toString();
+            if (elPackets) elPackets.textContent = packets.toLocaleString();
         });
     }
 

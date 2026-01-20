@@ -18,6 +18,12 @@
         <p>On some systems, you may need to enable <code>chrome://flags/#enable-unsafe-webgpu</code>.</p>
       </div>
     </div>
+    <div id="stats-overlay" style="position: fixed; top: 10px; right: 10px; padding: 10px; background: rgba(0,0,0,0.5); color: #0f0; font-family: monospace; font-size: 12px; pointer-events: none; border: 1px solid #0f0; z-index: 100;">
+      <div>Active: <span id="stats-active">0</span></div>
+      <div>Entities: <span id="stats-total">0</span></div>
+      <div>Clients: <span id="stats-clients">0</span></div>
+      <div>Packets: <span id="stats-packets">0</span></div>
+    </div>
     <canvas id="gpuCanvas"></canvas>
     <script type="module" src="/src/main.ts"></script>
   </body>

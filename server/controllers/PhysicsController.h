@@ -28,6 +28,14 @@ struct PhysicsMoveRequest {
     float x, y, z;
 } __attribute__((packed));
 
+struct ProjectStats {
+    uint32_t active_entities;
+    uint32_t total_entities;
+    uint32_t client_count;
+    uint32_t padding; // Align to 8 bytes for the u64
+    uint64_t total_packets;
+} __attribute__((packed));
+
 extern std::mutex registry_mutex;
 
 class PhysicsController {
@@ -40,6 +48,28 @@ public:
         // Asset Manifest 'A' - Get the scene configuration
         server.register_command('A', "GetAssets", 0, "", "json", [&scene](int, const std::string& input) {
             return scene.get_raw_json();
+        });
+
+        // Stats Stream 'S'
+        server.register_stream('S', "GetStats", sizeof(ProjectStats), "u32,u32,u32,u32,u64", [&server, &registry, &physics]() {
+            ProjectStats stats;
+            std::memset(&stats, 0, sizeof(ProjectStats));
+            {
+                std::lock_guard<std::mutex> lock(registry_mutex);
+                stats.total_entities = (uint32_t)registry.storage<entt::entity>().size();
+                stats.active_entities = 0;
+                auto& bi = physics.GetBodyInterface();
+                auto view = registry.view<PhysicsComponent>();
+                for (auto ent : view) {
+                    if (bi.IsActive(view.get<PhysicsComponent>(ent).body_id)) {
+                        stats.active_entities++;
+                    }
+                }
+            }
+            stats.client_count = (uint32_t)server.get_client_count('W'); 
+            stats.total_packets = server.get_total_packets();
+            
+            return std::string(reinterpret_cast<const char*>(&stats), sizeof(ProjectStats));
         });
 
         // Get Entities Info 'E' - Returns full state (positions + colors) for all entities

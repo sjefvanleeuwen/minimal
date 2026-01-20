@@ -20,7 +20,7 @@ public:
                     JPH::Vec3 pos = start_pos + JPH::Vec3(r * (size + spacing), h * (size), c * (size + spacing)) + JPH::Vec3(0, size * 0.5f, 0);
                     
                     // Create physics body (Box)
-                    auto body_id = physics.CreateBox(pos, JPH::Vec3(size * 0.5f, size * 0.5f, size * 0.5f), JPH::EMotionType::Dynamic, Layers::MOVING, JPH::Quat::sIdentity(), 0.9f, 2000.0f);
+                    auto body_id = physics.CreateBox(pos, JPH::Vec3(size * 0.5f, size * 0.5f, size * 0.5f), JPH::EMotionType::Dynamic, Layers::MOVING, JPH::Quat::sIdentity(), 0.9f, 10.0f);
                     
                     // Add components
                     registry.emplace<PhysicsComponent>(entity, body_id);

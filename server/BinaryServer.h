@@ -40,6 +40,16 @@ public:
         disconnect_callback = callback;
     }
 
+    uint64_t get_total_packets() const { return total_packets_sent.load(); }
+
+    int get_client_count(char stream_id) {
+        std::lock_guard<std::mutex> lock(stream_clients_mutex);
+        if (stream_clients.count(stream_id)) {
+            return stream_clients.at(stream_id).size();
+        }
+        return 0;
+    }
+
     void start() {
         int threads_count = std::thread::hardware_concurrency();
         if (threads_count == 0) threads_count = 1;
@@ -71,7 +81,7 @@ private:
     std::vector<std::thread> workers;
     std::vector<EndpointContract> contract_list;
     
-    // Stream broadcast infrastructure
+    std::atomic<uint64_t> total_packets_sent{0};
     std::mutex stream_clients_mutex;
     std::map<char, std::set<int>> stream_clients;  // cmd_id -> set of client fds
     std::atomic<bool> broadcast_running{false};
@@ -142,6 +152,8 @@ private:
                         // Partial send - for high-speed binary streams, this client is lagging
                         // In a production app you might buffer, but for 60Hz we drop to maintain low latency
                         dead_clients.push_back(fd);
+                    } else {
+                        total_packets_sent++;
                     }
                 }
 
