@@ -9,8 +9,8 @@ export class SphereNode extends SceneNode {
     }
 
     getVertices(): Float32Array {
-        const latitudeBands = 20;
-        const longitudeBands = 20;
+        const latitudeBands = 32;
+        const longitudeBands = 32;
         const vertices = [];
 
         for (let lat = 0; lat < latitudeBands; lat++) {
@@ -27,13 +27,16 @@ export class SphereNode extends SceneNode {
                 const p3 = this.getPoint(theta2, phi1);
                 const p4 = this.getPoint(theta2, phi2);
 
-                vertices.push(...p1, 1, ...p1); // Pos (vec4), LocalPos (vec3)
-                vertices.push(...p2, 1, ...p2);
+                // Consistent CCW Winding: 
+                // T1: P1, P3, P2
+                vertices.push(...p1, 1, ...p1); 
                 vertices.push(...p3, 1, ...p3);
+                vertices.push(...p2, 1, ...p2);
                 
+                // T2: P3, P4, P2
                 vertices.push(...p3, 1, ...p3);
-                vertices.push(...p2, 1, ...p2);
                 vertices.push(...p4, 1, ...p4);
+                vertices.push(...p2, 1, ...p2);
             }
         }
         return new Float32Array(vertices);

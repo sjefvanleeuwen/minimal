@@ -1,5 +1,6 @@
 import { mat4 } from 'gl-matrix';
 import { SceneNode } from './nodes/SceneNode';
+import { SphereNode } from './nodes/SphereNode';
 import { ShaderEngine } from './ShaderEngine';
 import shaderSourceRaw from './shaders/default.wgsl?raw';
 
@@ -141,6 +142,10 @@ export class Renderer {
         });
 
         for (const node of sortedNodes) {
+            const modelMatrix = node.getModelMatrix();
+            const mvpMatrix = mat4.create();
+            mat4.multiply(mvpMatrix, viewProjectionMatrix, modelMatrix);
+
             const vertices = node.getVertices();
             const vertexBuffer = this.device.createBuffer({
                 size: vertices.byteLength,
@@ -150,14 +155,14 @@ export class Renderer {
             new Float32Array(vertexBuffer.getMappedRange()).set(vertices);
             vertexBuffer.unmap();
 
-            const modelMatrix = node.getModelMatrix();
-            const mvpMatrix = mat4.create();
-            mat4.multiply(mvpMatrix, viewProjectionMatrix, modelMatrix);
-
-            const uniformData = new Float32Array(16 + 16 + 4); // MVP + Model + Color
+            const uniformData = new Float32Array(16 + 16 + 4 + 4); // MVP + Model + Color + Type
             uniformData.set(mvpMatrix);
             uniformData.set(modelMatrix, 16);
             uniformData.set(node.color, 32);
+            
+            // nodeType: 0 = Ground/Ramp, 1 = Sphere
+            const nodeType = (node instanceof SphereNode) ? 1.0 : 0.0;
+            uniformData[36] = nodeType;
 
             const uniformBuffer = this.device.createBuffer({
                 size: uniformData.byteLength,
