@@ -13,4 +13,10 @@ struct PhysicsComponent {
     JPH::BodyID body_id;
 };
 
+struct InputComponent {
+    float dx = 0;
+    float dy = 0;
+    float dz = 0;
+};
+
 #endif

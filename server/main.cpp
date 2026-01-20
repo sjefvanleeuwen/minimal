@@ -25,33 +25,47 @@ int main() {
     // Create a ground plane: half-extent 100x100, top at Y=0
     physics.CreateBox(JPH::Vec3(0, -1, 0), JPH::Vec3(100, 1, 100), JPH::EMotionType::Static, Layers::NON_MOVING);
 
-    // Plateau: Top at Y=2.0, Thickness 0.2 -> Center at Y=1.9
-    physics.CreateBox(JPH::Vec3(0, 1.9f, -15.0f), JPH::Vec3(5, 0.1f, 5), JPH::EMotionType::Static, Layers::NON_MOVING);
-
     // Ramp: Top connects 0 to 2, Thickness 0.2 -> Center connects -0.1 to 1.9. 
     // Midpoint height = 0.9. Midpoint Z = -5.0. Angle = atan(2/10) = 11.31 deg.
     JPH::Quat ramp_rot = JPH::Quat::sRotation(JPH::Vec3::sAxisX(), -11.31f * JPH::JPH_PI / 180.0f);
     physics.CreateBox(JPH::Vec3(0, 0.9f, -5.0f), JPH::Vec3(5, 0.1f, 5), JPH::EMotionType::Static, Layers::NON_MOVING, ramp_rot);
 
-    // Create a falling sphere for demo - matches client radius 0.5
+    // Create a falling sphere for demo - matches client radius 1.0
     auto entity = registry.create();
     printf("[Server] Created entity with ID: %d\n", (uint32_t)entity);
     
-    auto body_id = physics.CreateSphere(JPH::Vec3(0, 10, 0), 0.5f, JPH::EMotionType::Dynamic, Layers::MOVING);
+    auto body_id = physics.CreateSphere(JPH::Vec3(0, 5, 0), 1.0f, JPH::EMotionType::Dynamic, Layers::MOVING);
     registry.emplace<PhysicsComponent>(entity, body_id);
-    registry.emplace<TransformComponent>(entity, 0.0f, 10.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+    registry.emplace<TransformComponent>(entity, 0.0f, 5.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+    registry.emplace<InputComponent>(entity, 0.0f, 0.0f, 0.0f);
 
     // Start Physics Thread (60Hz)
     std::thread physics_thread([&]() {
         auto last_time = std::chrono::steady_clock::now();
         while (running) {
             auto now = std::chrono::steady_clock::now();
-            // float dt = std::chrono::duration<float>(now - last_time).count(); // Not used currently
             last_time = now;
+
+            // Apply inputs as forces before stepping
+            {
+                std::lock_guard<std::mutex> lock(registry_mutex);
+                auto view = registry.view<PhysicsComponent, InputComponent>();
+                auto &bi = physics.GetBodyInterface();
+                for (auto ent : view) {
+                    auto &phys = view.get<PhysicsComponent>(ent);
+                    auto &inp = view.get<InputComponent>(ent);
+                    
+                    if (inp.dx != 0 || inp.dz != 0) {
+                        float force_magnitude = 25000.0f; // Enough to move a ~4 ton ball
+                        bi.AddForce(phys.body_id, JPH::Vec3(inp.dx * force_magnitude, 0, inp.dz * force_magnitude));
+                        bi.ActivateBody(phys.body_id);
+                    }
+                }
+            }
 
             physics.Step(1.0f / 60.0f); // Fixed step for AAA stability
 
-            // Sync physics back to ECS
+            // Sync physics back to ECS and check for "fell off world"
             {
                 std::lock_guard<std::mutex> lock(registry_mutex);
                 auto view = registry.view<PhysicsComponent, TransformComponent>();
@@ -61,6 +75,15 @@ int main() {
                     auto &trans = view.get<TransformComponent>(ent);
                     
                     JPH::Vec3 pos = bi.GetPosition(phys.body_id);
+                    
+                    // Respawn if fell off (Y < -10)
+                    if (pos.GetY() < -10.0f) {
+                        bi.SetPosition(phys.body_id, JPH::Vec3(0, 5, 0), JPH::EActivation::Activate);
+                        bi.SetLinearVelocity(phys.body_id, JPH::Vec3::sZero());
+                        bi.SetAngularVelocity(phys.body_id, JPH::Vec3::sZero());
+                        pos = JPH::Vec3(0, 5, 0);
+                    }
+
                     JPH::Quat rot = bi.GetRotation(phys.body_id);
                     
                     trans.x = pos.GetX(); trans.y = pos.GetY(); trans.z = pos.GetZ();

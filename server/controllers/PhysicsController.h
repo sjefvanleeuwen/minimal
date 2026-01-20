@@ -23,33 +23,22 @@ extern std::mutex registry_mutex;
 class PhysicsController {
 public:
     static void register_routes(BinaryServer& server, entt::registry& registry, PhysicsSystem& physics) {
-        // Move Entity 'M' - Interpret as input direction
-        server.register_command('M', "MoveEntity", sizeof(uint32_t), "u32,f32,f32,f32", "u32", [&registry, &physics](const std::string& input) {
+        // Move Entity 'M' - Update Input State
+        server.register_command('M', "MoveEntity", sizeof(uint32_t), "u32,f32,f32,f32", "u32", [&registry](const std::string& input) {
             if (input.size() < sizeof(PhysicsMoveRequest)) return std::string("\0\0\0\0", 4);
             
             const auto* req = reinterpret_cast<const PhysicsMoveRequest*>(input.data());
             auto entity = (entt::entity)req->entity_id;
             
             std::lock_guard<std::mutex> lock(registry_mutex);
-            if (registry.valid(entity) && registry.all_of<PhysicsComponent>(entity)) {
-                auto &phys = registry.get<PhysicsComponent>(entity);
-                auto &bi = physics.GetBodyInterface();
-                
-                // Increase speed and allow some momentum
-                float speed = 8.0f;
-                JPH::Vec3 current_vel = bi.GetLinearVelocity(phys.body_id);
-                
-                // When moving, we set the target X/Z velocity but preserve the Y velocity
-                // We also wake the body up
-                JPH::Vec3 target_vel(req->x * speed, current_vel.GetY(), req->z * speed);
-                
-                bi.SetLinearVelocity(phys.body_id, target_vel);
-                bi.ActivateBody(phys.body_id); 
+            if (registry.valid(entity)) {
+                auto &inp = registry.get_or_emplace<InputComponent>(entity);
+                inp.dx = req->x;
+                inp.dy = req->y;
+                inp.dz = req->z;
                 
                 uint32_t status = 1;
                 return std::string(reinterpret_cast<const char*>(&status), 4);
-            } else {
-                printf("[Physics] Input rejected: invalid entity %d\n", req->entity_id);
             }
             
             uint32_t status = 0;

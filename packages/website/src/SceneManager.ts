@@ -8,7 +8,6 @@ import { DynamicBinaryClient } from './DynamicBinaryClient';
 export class SceneManager {
     public nodes: SceneNode[] = [];
     public sphere!: SphereNode;
-    public plateau!: RampNode;
     public ramp!: RampNode;
     private serverEntityId: number | null = null;
     private keys: Record<string, boolean> = {};
@@ -18,12 +17,8 @@ export class SceneManager {
     private lastDz = 0;
 
     constructor() {
-        this.sphere = new SphereNode(0.5);
+        this.sphere = new SphereNode(1.0); // Increase radius to 1.0 for better visibility
         this.sphere.color = [0, 0.5, 1.0, 1.0]; // Server controlled sphere (Blue, Opaque)
-
-        // Robust layout: Thickness 0.2, Top surfaces at Ground=0, Plateau=2
-        this.plateau = new RampNode(10, 0.2, 10);
-        this.plateau.position = [0, 1.9, -15];
 
         this.ramp = new RampNode(10, 0.2, 10);
         this.ramp.position = [0, 0.9, -5.0]; 
@@ -31,7 +26,6 @@ export class SceneManager {
 
         // Match server ground box: half-extents 100 -> size 200
         this.nodes.push(new GroundNode(100)); 
-        this.nodes.push(this.plateau);
         this.nodes.push(this.ramp);
         this.nodes.push(this.sphere);
 
@@ -113,11 +107,20 @@ export class SceneManager {
 
     getViewProjectionMatrix(aspect: number): mat4 {
         const projectionMatrix = mat4.create();
-        mat4.perspective(projectionMatrix, (45 * Math.PI) / 180, aspect, 0.1, 100.0);
+        mat4.perspective(projectionMatrix, (45 * Math.PI) / 180, aspect, 0.1, 1000.0);
 
         const viewMatrix = mat4.create();
-        const eye = vec3.fromValues(5, 5, 5);
-        const center = vec3.fromValues(0, 0, 0);
+        
+        // Camera Follow Logic: Stay behind and above the ball
+        // We'll use a fixed offset relative to the ball's position
+        const ballPos = this.sphere.position;
+        const offset = vec3.fromValues(10, 10, 15);
+        const eye = vec3.create();
+        vec3.add(eye, ballPos, offset);
+        
+        const center = vec3.clone(ballPos);
+        center[1] += 1.0; // Look slightly above the ball
+        
         const up = vec3.fromValues(0, 1, 0);
         mat4.lookAt(viewMatrix, eye, center, up);
 

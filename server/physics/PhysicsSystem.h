@@ -87,6 +87,8 @@ public:
 
         physics_system.Init(cMaxBodies, cMaxBodyMutexes, cMaxMaxBodyPairs, cMaxContactConstraints, 
                             bp_layer_interface, obj_vs_bp_filter, obj_vs_obj_filter);
+        
+        physics_system.SetGravity(JPH::Vec3(0, -9.81f, 0));
     }
 
     ~PhysicsSystem() {
@@ -107,6 +109,11 @@ public:
         JPH::ShapeRefC shape = result.Get();
 
         JPH::BodyCreationSettings settings(shape, position, JPH::Quat::sIdentity(), motion_type, layer);
+        settings.mFriction = 1.0f;     // High friction for rolling
+        settings.mRestitution = 0.2f;  // Slight bounce
+        settings.mLinearDamping = 0.1f;
+        settings.mAngularDamping = 0.2f;
+        
         JPH::BodyID body_id = body_interface.CreateAndAddBody(settings, JPH::EActivation::Activate);
         return body_id;
     }
@@ -118,6 +125,8 @@ public:
         JPH::ShapeRefC shape = result.Get();
 
         JPH::BodyCreationSettings settings(shape, position, rotation, motion_type, layer);
+        settings.mFriction = 1.0f; // High friction for the floors/ramps
+        
         JPH::BodyID body_id = body_interface.CreateAndAddBody(settings, JPH::EActivation::Activate);
         return body_id;
     }
