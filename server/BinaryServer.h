@@ -19,6 +19,8 @@
 
 #include "utils/SHA1.h"
 #include "core/EndpointContract.h"
+#include "core/HttpProtocol.h"
+#include "core/WebSocketProtocol.h"
 
 class BinaryServer {
 public:
@@ -117,15 +119,7 @@ private:
                 }
 
                 // Build WebSocket frame once
-                std::vector<unsigned char> frame;
-                frame.push_back(0x82); // Binary frame
-                if (payload.size() <= 125) {
-                    frame.push_back((unsigned char)payload.size());
-                } else {
-                    frame.push_back(126); // 16-bit length
-                    frame.push_back((unsigned char)((payload.size() >> 8) & 0xFF));
-                    frame.push_back((unsigned char)(payload.size() & 0xFF));
-                }
+                std::vector<unsigned char> frame = WebSocketProtocol::build_frame_header(payload.size());
 
                 // Broadcast to all clients (no lock held during sends!)
                 std::vector<int> dead_clients;
@@ -207,7 +201,6 @@ private:
     }
 
     void handle_client(int client_fd, int epoll_fd) {
-        // Keep socket non-blocking, use MSG_DONTWAIT for all operations
         char buffer[4096];
         int bytes = recv(client_fd, buffer, sizeof(buffer) - 1, MSG_DONTWAIT);
         if (bytes <= 0) { 
@@ -215,113 +208,48 @@ private:
             close(client_fd); 
             return; 
         }
-        buffer[bytes] = '\0';  // Null terminate for string operations
-        
+        buffer[bytes] = '\0';
         std::string req(buffer, bytes);
-        // printf("[Server] Received %d bytes\n", bytes); // Verbose logging
 
-        // Determine if it's a HTTP Request (likely from Browser)
-        bool is_http = (req.find("GET ") == 0 || req.find("POST ") == 0 || req.find("OPTIONS ") == 0);
+        bool is_http = HttpProtocol::is_http(req);
         
-        // Handle OPTIONS for CORS
-        if (is_http && req.find("OPTIONS ") != std::string::npos) {
-            std::string res = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, GET, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nConnection: close\r\n\r\n";
-            send(client_fd, res.data(), res.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
+        if (is_http && HttpProtocol::is_options(req)) {
+            HttpProtocol::send_cors_response(client_fd);
             epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
             close(client_fd);
             return;
         }
 
-        // Find command ID (the character after the first / in the path)
         char cmd_id = 0;
         size_t method_end = req.find(" /");
         if (method_end != std::string::npos) {
-            size_t path_start = method_end + 2; // Position after " /"
+            size_t path_start = method_end + 2; 
             if (path_start < req.size() && req[path_start] != ' ') {
                 cmd_id = req[path_start];
             }
         } else if (!is_http) {
-            cmd_id = buffer[0]; // Fallback to first byte for raw TCP
+            cmd_id = buffer[0]; 
         }
 
-        // Extract body if provided (for HTTP POST)
         std::string body_input;
         if (is_http) {
-            size_t body_sep = req.find("\r\n\r\n");
-            if (body_sep != std::string::npos) {
-                body_input = req.substr(body_sep + 4);
-                
-                // If we have a Content-Length, read remaining body (non-blocking with retry)
-                size_t cl_pos = req.find("Content-Length: ");
-                if (cl_pos != std::string::npos) {
-                    size_t cl_end = req.find("\r\n", cl_pos);
-                    int expected_len = std::stoi(req.substr(cl_pos + 16, cl_end - (cl_pos + 16)));
-                    int retries = 0;
-                    while ((int)body_input.size() < expected_len && retries < 10) {
-                        int n = recv(client_fd, buffer, sizeof(buffer), MSG_DONTWAIT);
-                        if (n > 0) {
-                            body_input.append(buffer, n);
-                            retries = 0;  // Reset on successful read
-                        } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                            retries++;
-                            std::this_thread::sleep_for(std::chrono::microseconds(100));
-                        } else {
-                            break;  // Error or connection closed
-                        }
-                    }
-                }
-            }
-        } else {
-            // For raw TCP, assume first byte is cmd_id, the rest is body
-            if (bytes > 1) body_input = req.substr(1);
+            body_input = HttpProtocol::extract_body(client_fd, req, buffer, sizeof(buffer));
+        } else if (bytes > 1) {
+            body_input = req.substr(1);
         }
 
-        // Check for WebSocket upgrade
-        bool is_ws = (req.find("Upgrade: websocket") != std::string::npos) || 
-                      (req.find("upgrade: websocket") != std::string::npos) ||
-                      (req.find("Upgrade: WebSocket") != std::string::npos);
-
-        if (is_ws) {
-            std::string key;
-            size_t key_pos = req.find("Sec-WebSocket-Key: ");
-            if (key_pos == std::string::npos) key_pos = req.find("sec-websocket-key: ");
-            
-            if (key_pos != std::string::npos) {
-                size_t start = key_pos + 19;
-                size_t end = req.find("\r", start);
-                if (end == std::string::npos) end = req.find("\n", start);
-                key = req.substr(start, end - start);
-                key.erase(0, key.find_first_not_of(" "));
-                key.erase(key.find_last_not_of(" ") + 1);
-
-                std::string accept = sha1_ws(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
-                printf("[Server] WS Handshake for key: [%s] -> accept: [%s]\n", key.c_str(), accept.c_str());
-                
-                std::string handshake = 
-                    "HTTP/1.1 101 Switching Protocols\r\n"
-                    "Upgrade: websocket\r\n"
-                    "Connection: Upgrade\r\n"
-                    "Sec-WebSocket-Accept: " + accept + "\r\n\r\n";
-                
-                send(client_fd, handshake.data(), handshake.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
-
+        if (is_http && WebSocketProtocol::is_upgrade(req)) {
+            if (WebSocketProtocol::do_handshake(client_fd, req) != "") {
                 if (streams.count(cmd_id)) {
-                    // Set socket to non-blocking for broadcast
                     set_nonblocking(client_fd);
-                    
-                    // Enable TCP_NODELAY for low latency
                     int opt = 1;
                     setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
-                    
-                    // Add to broadcast list
                     {
                         std::lock_guard<std::mutex> lock(stream_clients_mutex);
                         stream_clients[cmd_id].insert(client_fd);
                         printf("[Server] Added stream client fd=%d for cmd=%c (total: %zu)\n", 
                                client_fd, cmd_id, stream_clients[cmd_id].size());
                     }
-                    
-                    // Remove from epoll - broadcast thread handles this now
                     epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
                     return;
                 }
@@ -332,7 +260,6 @@ private:
         bool found = false;
 
         if (cmd_id == 0 && is_http) {
-            // Root path - return server health check
             body = "{\"status\":\"ok\",\"server\":\"BinaryServer\"}";
             found = true;
         } else if (cmd_id == '?') {
@@ -344,10 +271,8 @@ private:
         }
 
         if (is_http) {
-            std::string res = found ? "HTTP/1.1 200 OK\r\n" : "HTTP/1.1 404 Not Found\r\n";
             std::string content_type = (cmd_id == 0) ? "application/json" : "application/octet-stream";
-            res += "Content-Type: " + content_type + "\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: " + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body;
-            send(client_fd, res.data(), res.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
+            HttpProtocol::send_response(client_fd, found, body, content_type);
         } else if (found) {
             send(client_fd, body.data(), body.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
         }
