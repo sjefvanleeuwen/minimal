@@ -50,6 +50,13 @@ Since the server uses `epoll` for high-performance networking, it requires a Lin
     pnpm server:run
     ```
 
+## Planetary Physics Extension
+This project includes a high-fidelity planetary physics simulation and documentation suite located in `packages/docs`. 
+
+- **Unified Reference Frame:** Visualizes global, orbital, and geodesic coordinate systems.
+- **Spherical Dynamics:** Implements radial gravity ($1/r^2$) and pole-crossing continuity for surface navigation.
+- **Documentation:** See `planet-physics.md` for technical deep-dives into spherical coordinate singularities and Jolt-based point gravity.
+
 3.  **Run the Frontend (in a separate terminal):**
     ```bash
     pnpm dev

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planetary Physics Documentation</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;700&family=Inter:wght@400;700&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+            line-height: 1.6;
+            color: #ccc;
+            background: #05070a;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 4rem 2rem;
+        }
+        h1 { 
+            font-family: 'Crimson Pro', serif;
+            font-size: 3.5rem;
+            color: #fff; 
+            margin-bottom: 0.5rem;
+            letter-spacing: -1px;
+        }
+        .subtitle {
+            font-family: 'Inter', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+            font-size: 0.8rem;
+            color: #00ffcc;
+            margin-bottom: 3rem;
+            display: block;
+        }
+        h2 { 
+            font-family: 'Crimson Pro', serif;
+            font-size: 2rem;
+            color: #eee;
+            margin-top: 4rem;
+            border-bottom: 1px solid #1a202c;
+            padding-bottom: 1rem;
+        }
+        .illustration-card {
+            margin: 3rem 0;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+            position: relative;
+        }
+        .label-tag {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: #00ffcc;
+            color: #000;
+            padding: 2px 8px;
+            font-size: 10px;
+            font-weight: bold;
+            text-transform: uppercase;
+            border-radius: 2px;
+            z-index: 10;
+        }
+        canvas {
+            width: 100%;
+            height: 500px;
+            display: block;
+            image-rendering: crisp-edges;
+        }
+        .caption {
+            padding: 1.5rem;
+            color: #8b949e;
+            font-size: 0.85rem;
+            background: #0d1117;
+            border-top: 1px solid #30363d;
+            text-align: left;
+        }
+        .math {
+            font-family: 'Crimson Pro', serif;
+            font-style: italic;
+            font-size: 1.4rem;
+            background: #0a0e14;
+            padding: 2rem;
+            display: block;
+            text-align: center;
+            margin: 2rem 0;
+            border-left: 2px solid #00ffcc;
+            border-radius: 0 8px 8px 0;
+            color: #00ffcc;
+        }
+        p {
+            font-size: 1.1rem;
+            color: #8b949e;
+            max-width: 70ch;
+        }
+        strong { color: #fff; }
+    </style>
+</head>
+<body>
+    <span class="subtitle">Technical Monograph #01</span>
+    <h1>Planetary Physics</h1>
+    <p>Architecture of spherical simulations and orbital dynamics using the Jolt Physics engine.</p>
+
+    <h2>The Unified Planetary Reference Frame</h2>
+    <p>Simulating physics at a planetary scale requires bridging the gap between three distinct navigational domains. This schematic demonstrates how these frames interact within a singular radial gravity field ($1/r^2$).</p>
+    
+    <div class="illustration-card">
+        <div class="label-tag">Live Schematic: FIG A.01</div>
+        <canvas id="gravity-canvas"></canvas>
+        <div class="caption">
+            <strong>1. The Geodesic Local Frame (Orange Lander):</strong> Pinned to the surface by radial gravity. While the planet rotates with an <strong>axial tilt of 23.5°</strong>, the lander preserves its position relative to the surface manifold. Use <strong>WASD keys</strong> to navigate its local spherical coordinates. Movement correctly persists across the <strong>planetary poles</strong> via longitude flipping ($+\pi$).<br><br>
+            <strong>2. The Orbital Frame (Grey Moon):</strong> Maintains equilibrium through centripetal acceleration ($\omega = \sqrt{GM/r^3}$). It follows an <strong>elliptical trajectory</strong> and is <strong>tidally locked</strong>, meaning its rotation period matches its orbital period.<br><br>
+            <strong>3. The Global Frame (Yellow Satellite):</strong> A world-space stationary observer. It must constantly "fire engines" (upward yellow vector) to counteract the inward pull of gravity (red vector).<br><br>
+            <strong>4. Technical Indicators:</strong> The <strong>Red Axis</strong> marks the planetary poles. The **Inverse Square Law** is visualized by the length of the radial vectors.
+            <strong>Interaction:</strong> Click and drag to <strong>Mouse Look</strong>. Scroll to <strong>Zoom</strong>.
+        </div>
+    </div>
+
+    <div class="math">
+        \vec{F}_g = \frac{G M m}{r^2} \hat{r}
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
