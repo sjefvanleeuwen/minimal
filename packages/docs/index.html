@@ -157,11 +157,21 @@
         </div>
 
         <div class="illustration-card">
-            <div class="label-tag">Live Schematic: FIG A.02 (Nanite)</div>
+            <div class="label-tag">Live Schematic: FIG A.02 (Nanite Virtualization)</div>
             <canvas id="gravity-nanite-canvas"></canvas>
             <div class="caption">
-                <strong>Virtualized Geometry Integration:</strong> This version of the simulation utilizes <strong>Nanite-style meshlet clustering</strong> for the planetary body. Even with millions of polygons, the engine maintains a constant 60 FPS by only rendering clusters that are visible and relevant to the current pixel density.<br><br>
-                <strong>Dynamic LOD:</strong> Notice how the surface detail remains perfectly sharp as you descend from orbit to the surface. The geometry is streamed and updated in real-time, eliminating the need for traditional discrete LOD levels.
+                <strong>Virtualized Geometry Integration:</strong> This version of the simulation utilizes <strong>Nanite-style meshlet clustering</strong> for the planetary body and its moon. The engine maintains high performance by only rendering clusters relevant to the current pixel density.<br><br>
+                <strong>10-Level Shared Hierarchy:</strong> Both the planet and moon utilize a synchronized <strong>10-level LOD spectrum</strong>. Geometry ranges from high-density $48 \times 48$ grids (Green) to ultra-low $1 \times 1$ patches (Purple), ensuring optimal vertex throughput across the entire orbital system.
+                <strong>Interaction:</strong> Click and drag to <strong>Rotate</strong>. Scroll to <strong>Zoom</strong>.
+            </div>
+        </div>
+
+        <div class="illustration-card">
+            <div class="label-tag">Live Schematic: FIG A.03 (Textured Nanite)</div>
+            <canvas id="gravity-textured-nanite-canvas"></canvas>
+            <div class="caption">
+                <strong>Nanite Procedural Aware Texture:</strong> Here we combine high-frequency <strong>Procedural Simplex Noise</strong> with the meshlet virtualization system. The terrain is generated on-the-fly with <strong>12 octaves of detail</strong>.<br><br>
+                <strong>Seamless Surface Integrity:</strong> To ensure texture stability, the shader calculates a <strong>per-pixel LOD</strong>. This allows high-resolution details to fade in continuously rather than popping, maintaining perfect visual integrity even as the underlying meshlet clusters flip their geometric resolution independently.
                 <strong>Interaction:</strong> Click and drag to <strong>Rotate</strong>. Scroll to <strong>Zoom</strong>.
             </div>
         </div>
@@ -199,11 +209,14 @@
             <div class="label-tag">Visualizer: Meshlet Hierarchies</div>
             <canvas id="nanite-canvas"></canvas>
             <div class="caption">
-                <strong>Color-Coded LOD levels:</strong> To better visualize the Nanite effect, we have color-coded the subdivision density:<br>
-                - <span style="color: #00ff00">●</span> <strong>Green:</strong> High Detail (LOD 0) - Active when the camera is close.<br>
-                - <span style="color: #ffff00">●</span> <strong>Yellow:</strong> Medium Detail (LOD 1) - Transitional distance.<br>
-                - <span style="color: #ff0000">●</span> <strong>Red:</strong> Low Detail (LOD 2) - For distant geometry.<br><br>
-                <strong>Distance-Based Swapping:</strong> Rotate the camera or scroll to zoom. You will see individual "meshlet" patches pop between colors and geometric densities as they cross distance thresholds, exactly how a modern virtualized geometry system manages its vertex budget.
+                <strong>Color-Coded LOD levels:</strong> To visualize the internal Nanite logic, the clusters are colored based on their current subdivision density:<br>
+                - <span style="color: #00ff00">●</span> <strong>Green:</strong> Level 0 - High Detail ($48 \times 48$).<br>
+                - <span style="color: #0088ff">●</span> <strong>Blue:</strong> Level 1-2 - High-Mid Detail.<br>
+                - <span style="color: #00ffff">●</span> <strong>Cyan:</strong> Level 3-4 - Mid Detail.<br>
+                - <span style="color: #ffff00">●</span> <strong>Yellow:</strong> Level 5-6 - Low-Mid Detail.<br>
+                - <span style="color: #ff0000">●</span> <strong>Red:</strong> Level 7-8 - Low Detail.<br>
+                - <span style="color: #8800ff">●</span> <strong>Purple:</strong> Level 9 - Minimum Detail ($1 \times 1$).<br><br>
+                <strong>The Nanite Effect:</strong> Observe how individual patches swap colors as you zoom. The engine ensures that only the clusters directly in front of the camera or close to the surface consume the vertex budget, while the rest of the planet remains computationally lightweight.
             </div>
         </div>
     </div>

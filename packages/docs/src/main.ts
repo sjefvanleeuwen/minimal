@@ -6,6 +6,38 @@ import { InputController } from './input';
 import { PlanetaryPhysics } from './physics';
 import { PlanetTexturingArticle } from './PlanetTexturingArticle';
 import { NaniteArticle, MeshletNode } from './NaniteArticle';
+import { texturedMeshletWgsl } from './shaders';
+
+/**
+ * Custom Node for Textured Meshlets
+ */
+class TexturedMeshletNode extends MeshletNode {
+    constructor(name: string, renderer: WebGPURenderer, id: number, centroid: vec3, pipeline: GPURenderPipeline) {
+        super(name, renderer, id, centroid);
+        this.customPipeline = pipeline;
+    }
+
+    render(renderer: WebGPURenderer, pass: GPURenderPassEncoder, vp: mat4, cameraPos: vec3, time: number): void {
+        const uboData = new Float32Array(44);
+        uboData.set(vp, 0);
+        uboData.set(this.transform, 16);
+        uboData.set(this.color, 32);
+        uboData.set(cameraPos, 36);
+        uboData[39] = time;
+        uboData[40] = this.meshletId;
+        uboData[41] = this.currentLod;
+        // z parameter controls transparency: set to 0.0 for opaque
+        uboData[42] = 0.0; 
+
+        renderer.device.queue.writeBuffer(this.ubo, 0, uboData);
+
+        const lodIdx = Math.floor(this.currentLod);
+        pass.setPipeline(this.customPipeline);
+        pass.setBindGroup(0, this.bindGroup);
+        pass.setVertexBuffer(0, this.lodBuffers[lodIdx]);
+        pass.draw(this.lodCounts[lodIdx]);
+    }
+}
 
 /**
  * Custom Node for Gravity Force Vectors
@@ -73,7 +105,7 @@ class PlanetaryPhysicsArticle {
     fpPitch = -0.5;
     running = false;
 
-    constructor(canvasId: string, public useNanite = false) {
+    constructor(canvasId: string, public useNanite = false, public useTexture = false) {
         this.canvas = document.getElementById(canvasId) as HTMLCanvasElement;
         window.addEventListener('keydown', (e) => {
             if (e.code === 'KeyV' && this.running) this.isFirstPerson = !this.isFirstPerson;
@@ -83,6 +115,12 @@ class PlanetaryPhysicsArticle {
     async init(renderer: WebGPURenderer) {
         this.renderer = renderer;
         this.scene = new SceneManager(this.renderer);
+
+        let texturedPipeline: GPURenderPipeline | undefined;
+        if (this.useTexture) {
+            const module = renderer.device.createShaderModule({ code: texturedMeshletWgsl });
+            texturedPipeline = renderer.createRenderPipeline(module, 'triangle-list');
+        }
 
         const sphereData = GeometryFactory.createSphere(4, 48);
         const sphereBuf = this.renderer.createBuffer(sphereData);
@@ -120,7 +158,11 @@ class PlanetaryPhysicsArticle {
                         const v = -1.0 + (y + 0.5) * patchSize;
                         const center = GeometryFactory.projectPoint(face, u, v, 4);
                         const id = face * (subdivisions * subdivisions) + (y * subdivisions) + x;
-                        const node = new MeshletNode(`PlanetMeshlet_${id}`, this.renderer, id, vec3.fromValues(center[0], center[1], center[2]));
+                        
+                        const node = (this.useTexture && texturedPipeline)
+                            ? new TexturedMeshletNode(`PlanetMeshlet_${id}`, this.renderer, id, vec3.fromValues(center[0], center[1], center[2]), texturedPipeline)
+                            : new MeshletNode(`PlanetMeshlet_${id}`, this.renderer, id, vec3.fromValues(center[0], center[1], center[2]));
+                        
                         for (const d of densities) {
                             const data = GeometryFactory.createPatch(face, x, y, subdivisions, 4, d);
                             node.addLod(this.renderer.createBuffer(data), data.length / 3);
@@ -141,7 +183,9 @@ class PlanetaryPhysicsArticle {
                         const v = -1.0 + (y + 0.5) * patchSize;
                         const center = GeometryFactory.projectPoint(face, u, v, 4); // Radius 4, will be scaled to 0.4 later
                         const id = face * (subdivisions * subdivisions) + (y * subdivisions) + x;
-                        const node = new MeshletNode(`MoonMeshlet_${id}`, this.renderer, id, vec3.fromValues(center[0], center[1], center[2]));
+                        const node = (this.useTexture && texturedPipeline)
+                            ? new TexturedMeshletNode(`MoonMeshlet_${id}`, this.renderer, id, vec3.fromValues(center[0], center[1], center[2]), texturedPipeline)
+                            : new MeshletNode(`MoonMeshlet_${id}`, this.renderer, id, vec3.fromValues(center[0], center[1], center[2]));
                         for (const d of densities) {
                             const data = GeometryFactory.createPatch(face, x, y, subdivisions, 4, d);
                             node.addLod(this.renderer.createBuffer(data), data.length / 3);
@@ -304,15 +348,17 @@ async function init() {
     const renderer = await WebGPURenderer.create();
     const physicsApp = new PlanetaryPhysicsArticle('gravity-canvas');
     const nanitePhysicsApp = new PlanetaryPhysicsArticle('gravity-nanite-canvas', true);
+    const texturedNaniteApp = new PlanetaryPhysicsArticle('gravity-textured-nanite-canvas', true, true);
     const texturingApp = new PlanetTexturingArticle('texture-canvas');
     const naniteApp = new NaniteArticle('nanite-canvas');
     
     await physicsApp.init(renderer);
     await nanitePhysicsApp.init(renderer);
+    await texturedNaniteApp.init(renderer);
     await texturingApp.init(renderer);
     await naniteApp.init(renderer);
     
-    let currentApps: { start(): void, stop(): void }[] = [physicsApp, nanitePhysicsApp];
+    let currentApps: { start(): void, stop(): void }[] = [physicsApp, nanitePhysicsApp, texturedNaniteApp];
     currentApps.forEach(app => app.start());
 
     const navItems = document.querySelectorAll('.nav-item');
@@ -326,7 +372,7 @@ async function init() {
             document.getElementById(`${article}-article`)?.classList.add('active');
             
             currentApps.forEach(app => app.stop());
-            if (article === 'physics') currentApps = [physicsApp, nanitePhysicsApp];
+            if (article === 'physics') currentApps = [physicsApp, nanitePhysicsApp, texturedNaniteApp];
             else if (article === 'texturing') currentApps = [texturingApp];
             else currentApps = [naniteApp];
             

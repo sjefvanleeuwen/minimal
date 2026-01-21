@@ -257,16 +257,165 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let lightDir = normalize(vec3<f32>(1.0, 1.0, 1.0));
     let diff = max(dot(input.worldNormal, lightDir), 0.3);
     
-    // Wireframe effect
-    let edgeWidth = 0.05;
+    // Anti-Aliased Wireframe
     let bary = vec3<f32>(input.uv.x, input.uv.y, 1.0 - input.uv.x - input.uv.y);
-    let isEdge = any(bary < vec3<f32>(edgeWidth));
+    let a3 = fwidth(bary);
+    let a_edge = smoothstep(vec3<f32>(0.0), a3 * 1.5, bary);
+    let wire = 1.0 - min(min(a_edge.x, a_edge.y), a_edge.z);
     
     var finalColor = input.color * diff;
-    if (isEdge) {
-        finalColor = mix(finalColor, vec3<f32>(0.0, 0.0, 0.0), 0.5);
-    }
+    // Darker subtle wireframe for the rainbow LOD view
+    finalColor = mix(finalColor, vec3<f32>(0.0, 0.0, 0.0), wire * 0.4);
     
     return vec4<f32>(finalColor, 1.0);
+}
+`;
+
+export const texturedMeshletWgsl = `
+struct Uniforms {
+    viewProjectionMatrix : mat4x4<f32>,
+    modelMatrix : mat4x4<f32>,
+    color : vec4<f32>,
+    cameraPos : vec4<f32>, // xyz: camera pos, w: time
+    params : vec4<f32>,    // x: meshlet_id, y: lod_level, z: isTransparent, w: p3
+};
+
+@group(0) @binding(0) var<uniform> uniforms : Uniforms;
+
+struct VertexOutput {
+    @builtin(position) Position : vec4<f32>,
+    @location(0) worldPos : vec3<f32>,
+    @location(1) localPos : vec3<f32>,
+    @location(2) normal : vec3<f32>,
+    @location(3) uv : vec2<f32>,
+};
+
+@vertex
+fn vs_main(@location(0) position: vec3<f32>, @builtin(vertex_index) vIdx: u32) -> VertexOutput {
+    var output : VertexOutput;
+    let worldPos = uniforms.modelMatrix * vec4<f32>(position, 1.0);
+    output.Position = uniforms.viewProjectionMatrix * worldPos;
+    output.worldPos = worldPos.xyz;
+    output.localPos = position;
+    output.normal = normalize((uniforms.modelMatrix * vec4<f32>(position, 0.0)).xyz);
+    
+    let mod3 = vIdx % 3u;
+    if (mod3 == 0u) { output.uv = vec2<f32>(1.0, 0.0); }
+    else if (mod3 == 1u) { output.uv = vec2<f32>(0.0, 1.0); }
+    else { output.uv = vec2<f32>(0.0, 0.0); }
+    
+    return output;
+}
+
+fn permute(x: vec4<f32>) -> vec4<f32> { return ((x * 34.0) + 1.0) * x % 289.0; }
+fn taylorInvSqrt(r: vec4<f32>) -> vec4<f32> { return 1.79284291400159 - 0.85373472095314 * r; }
+
+fn snoise(v: vec3<f32>) -> f32 {
+    let C = vec2<f32>(1.0/6.0, 1.0/3.0);
+    let D = vec4<f32>(0.0, 0.5, 1.0, 2.0);
+    var i  = floor(v + dot(v, C.yyy));
+    let x0 = v - i + dot(i, C.xxx);
+    let g = step(x0.yzx, x0.xyz);
+    let l = 1.0 - g;
+    let i1 = min( g.xyz, l.zxy );
+    let i2 = max( g.xyz, l.zxy );
+    let x1 = x0 - i1 + C.xxx;
+    let x2 = x0 - i2 + C.yyy;
+    let x3 = x0 - D.yyy;
+    i = i % 289.0;
+    let p = permute( permute( permute( i.z + vec4<f32>(0.0, i1.z, i2.z, 1.0 ) ) + i.y + vec4<f32>(0.0, i1.y, i2.y, 1.0 ) ) + i.x + vec4<f32>(0.0, i1.x, i2.x, 1.0 ) );
+    let n_ = 0.142857142857;
+    let ns = n_ * D.wyz - D.xzx;
+    let j = p - 49.0 * floor(p * ns.z * ns.z);
+    let x_ = floor(j * ns.z);
+    let y_ = floor(j - 7.0 * x_);
+    let x = x_ *ns.x + ns.y;
+    let y = y_ *ns.x + ns.y;
+    let h = 1.0 - abs(x) - abs(y);
+    let b0 = vec4<f32>( x.xy, y.xy );
+    let b1 = vec4<f32>( x.zw, y.zw );
+    let s0 = floor(b0)*2.0 + 1.0;
+    let s1 = floor(b1)*2.0 + 1.0;
+    let sh = -step(h, vec4<f32>(0.0));
+    let a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
+    let a1 = b1.xzyw + s1.xzyw*sh.zzww ;
+    var p0 = vec3<f32>(a0.xy, h.x);
+    var p1 = vec3<f32>(a0.zw, h.y);
+    var p2 = vec3<f32>(a1.xy, h.z);
+    var p3 = vec3<f32>(a1.zw, h.w);
+    let norm = taylorInvSqrt(vec4<f32>(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+    p0 = p0 * norm.x; p1 = p1 * norm.y; p2 = p2 * norm.z; p3 = p3 * norm.w;
+    var m = max(0.6 - vec4<f32>(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), vec4<f32>(0.0));
+    m = m * m;
+    return 42.0 * dot( m*m, vec4<f32>( dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3) ) );
+}
+
+fn fbm(p: vec3<f32>) -> f32 {
+    var v = 0.0; var a = 0.5; var pos = p;
+    for (var i = 0; i < 8; i = i + 1) {
+        v = v + a * snoise(pos);
+        pos = pos * 2.0; a = a * 0.5;
+    }
+    return v;
+}
+
+fn fbm_lod(p: vec3<f32>, lod: f32) -> f32 {
+    var v = 0.0; var a = 0.5; var pos = p;
+    // High-Resolution Procedural Detail
+    // Maintain up to 12 octaves for extreme precision when close
+    let detail = clamp(12.0 - lod, 4.0, 12.0);
+    for (var i = 0; i < 12; i = i + 1) {
+        let weight = clamp(detail - f32(i), 0.0, 1.0);
+        if (weight <= 0.0) { break; }
+        v = v + a * snoise(pos) * weight;
+        pos = pos * 2.1; 
+        a = a * 0.48;
+    }
+    return v;
+}
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    let p = normalize(input.localPos);
+    
+    // Calculate per-pixel LOD for seamless texture stability across meshlets
+    let dist = distance(uniforms.cameraPos.xyz, input.worldPos);
+    // Dynamic radius detection (planet=4.0, moon=1.6)
+    let isMoon = length(uniforms.modelMatrix[0].xyz) < 1.0;
+    let radius = select(4.0, 1.6, isMoon);
+    let height = max(0.0, dist - radius);
+    let pixelLod = clamp(log2(height * 10.0 + 0.1) + 3.0, 0.0, 9.9);
+    
+    let viewDir = normalize(uniforms.cameraPos.xyz - input.worldPos);
+    let lightDir = normalize(vec3<f32>(1.0, 0.6, 1.0));
+    
+    // High-Frequency Scale for improved resolution feel
+    let h = fbm_lod(p * 4.5, pixelLod);
+    var albedo : vec3<f32>;
+    if (h < 0.0) { albedo = vec3<f32>(0.0, 0.2, 0.4); }
+    else if (h < 0.03) { albedo = vec3<f32>(0.7, 0.6, 0.4); }
+    else if (h < 0.45) { albedo = vec3<f32>(0.1, 0.3, 0.1); }
+    else { albedo = vec3<f32>(0.4, 0.3, 0.2); }
+    
+    // Visualization: Tint based on cluster LOD, while terrain remains stable
+    let lod = uniforms.params.y;
+    let lodTint = mix(vec3<f32>(0.0, 0.1, 0.0), vec3<f32>(0.1, 0.0, 0.1), lod / 10.0);
+    albedo = mix(albedo, albedo + lodTint, 0.2);
+
+    let diff = max(dot(input.normal, lightDir), 0.2);
+    let bary = vec3<f32>(input.uv.x, input.uv.y, 1.0 - input.uv.x - input.uv.y);
+    
+    // Anti-Aliased Wireframe using screenspace derivatives
+    let a3 = fwidth(bary);
+    let a_edge = smoothstep(vec3<f32>(0.0), a3 * 1.5, bary);
+    let wire = 1.0 - min(min(a_edge.x, a_edge.y), a_edge.z);
+    
+    var color = albedo * diff;
+    // Muted broken white with subtle alpha blend for better integration
+    let wireColor = vec4<f32>(0.8, 0.8, 0.75, 0.5); 
+    color = mix(color, wireColor.rgb, wire * wireColor.a);
+    
+    let opacity = mix(1.0, 0.4, uniforms.params.z);
+    return vec4<f32>(color, opacity);
 }
 `;
