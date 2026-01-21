@@ -5,6 +5,7 @@ import { GeometryFactory } from './geometry';
 import { InputController } from './input';
 import { PlanetaryPhysics } from './physics';
 import { PlanetTexturingArticle } from './PlanetTexturingArticle';
+import { NaniteArticle } from './NaniteArticle';
 
 /**
  * Custom Node for Gravity Force Vectors
@@ -227,9 +228,11 @@ async function init() {
     const renderer = await WebGPURenderer.create();
     const physicsApp = new PlanetaryPhysicsArticle('gravity-canvas');
     const texturingApp = new PlanetTexturingArticle('texture-canvas');
+    const naniteApp = new NaniteArticle('nanite-canvas');
     
     await physicsApp.init(renderer);
     await texturingApp.init(renderer);
+    await naniteApp.init(renderer);
     
     let currentApp: { start(): void, stop(): void } = physicsApp;
     currentApp.start();
@@ -245,7 +248,10 @@ async function init() {
             document.getElementById(`${article}-article`)?.classList.add('active');
             
             currentApp.stop();
-            currentApp = article === 'physics' ? physicsApp : texturingApp;
+            if (article === 'physics') currentApp = physicsApp;
+            else if (article === 'texturing') currentApp = texturingApp;
+            else currentApp = naniteApp;
+            
             currentApp.start();
         });
     });

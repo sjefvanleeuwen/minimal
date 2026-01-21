@@ -133,6 +133,7 @@
     <nav class="nav-menu">
         <a class="nav-item active" data-article="physics">Planetary Physics</a>
         <a class="nav-item" data-article="texturing">Planet Texturing</a>
+        <a class="nav-item" data-article="nanite">LOD & Nanite</a>
     </nav>
 
     <div id="physics-article" class="article-content active">
@@ -165,9 +166,6 @@
         <h1>Planet Texturing</h1>
         <p>Procedural terrain generation and spherical mapping on the GPU.</p>
 
-        <h2>GPU-Driven Procedural Manifolds</h2>
-        <p>Generating photo-realistic planetary surfaces requires high-frequency detail that scales with the observer's distance. This simulation uses WebGPU compute and fragment shaders to generate multi-octave FBM (Fractional Brownian Motion) noise directly on the GPU.</p>
-
         <div class="illustration-card">
             <div class="label-tag">Live Schematic: FIG B.01</div>
             <canvas id="texture-canvas"></canvas>
@@ -175,6 +173,25 @@
                 <strong>Procedural Surfaces:</strong> The planet's surface is generated entirely through mathematical functions. We use a 3D Simplex-based noise function mapped to a unit sphere.<br><br>
                 <strong>LOD & Detail:</strong> As you zoom in, the shader recalculates high-frequency harmonics, ensuring the "Infinite Coastline" remains sharp and detailed even at extreme close-ups.
                 <strong>Interaction:</strong> Click and drag to <strong>Rotate</strong>. Scroll to <strong>Zoom</strong>.
+            </div>
+        </div>
+    </div>
+
+    <div id="nanite-article" class="article-content">
+        <span class="subtitle">Technical Monograph #03</span>
+        <h1>LOD & Nanite Visualization</h1>
+        <p>Visualizing the concepts of Virtualized Geometry and Meshlet Hierarchies.</p>
+
+        <h2>Virtualizing the Pipeline</h2>
+        <p>Traditional LOD (switching between fixed models) causes "popping." Modern engines like Unreal Engine 5 use a continuous hierarchy of clusters to provide sub-pixel detail without ever overwhelming the GPU's triangle throughput.</p>
+
+        <div class="illustration-card">
+            <div class="label-tag">Visualizer: Meshlet Hierarchies</div>
+            <canvas id="nanite-canvas"></canvas>
+            <div class="caption">
+                <strong>Meshlet View (Wireframe/Color):</strong> In this demo, we visualize the planet by partitioning it into distinct clusters. Each color represents a "Meshlet."<br><br>
+                <strong>Distance-Based Culling:</strong> As the camera moves closer, notice how only the visible clusters are rendered at high fidelity, while the "back-side" or distant clusters are mathematically collapsed into simpler representations.<br><br>
+                <strong>Nanite Principles:</strong> Note how the boundary between meshlets remains seamless even as they transition between levels of detail.
             </div>
         </div>
     </div>
