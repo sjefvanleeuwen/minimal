@@ -1,4 +1,4 @@
-import { mat4, vec3 } from 'gl-matrix';
+import { mat4, vec3, vec4 } from 'gl-matrix';
 import { WebGPURenderer } from './engine';
 import { SceneManager, MeshNode } from './scene';
 import { GeometryFactory } from './geometry';
@@ -124,39 +124,82 @@ export class NaniteArticle {
         this.scene.cameraPos[2] = this.camDist * Math.sin(this.camTheta) * Math.sin(this.camPhi);
         vec3.set(this.scene.cameraTarget, 0, 0, 0);
 
-        // More aggressive logarithmic LOD mapping for 10 levels
+        // Pre-calculate view projection for frustum culling metrics
+        const aspect = this.canvas.clientWidth / this.canvas.clientHeight;
+        mat4.perspective(this.scene.proj, Math.PI / 4, aspect, 0.1, 1000);
+        mat4.lookAt(this.scene.view, this.scene.cameraPos, this.scene.cameraTarget, this.scene.cameraUp);
+        mat4.multiply(this.scene.vp, this.scene.proj, this.scene.view);
+
+        const time = Date.now() * 0.001;
+        const planetRot = time * 0.1;
+
+        // More aggressive logarithmic LOD mapping and Culling
         for (const m of this.meshlets) {
-            const dist = vec3.distance(this.scene.cameraPos, m.centroid);
+            mat4.identity(m.transform);
+            mat4.rotateY(m.transform, m.transform, planetRot);
+            
+            const worldCentroid = vec3.transformMat4(vec3.create(), m.centroid, m.transform);
+            const dist = vec3.distance(this.scene.cameraPos, worldCentroid);
+            
+            // Relaxed Horizon Culling: If cluster faces away from camera, hide it
+            const viewDir = vec3.sub(vec3.create(), this.scene.cameraPos, worldCentroid);
+            vec3.normalize(viewDir, viewDir);
+            const normal = vec3.normalize(vec3.create(), worldCentroid);
+            const dot = vec3.dot(viewDir, normal);
+            
+            // Allow significant curvature bleed (-0.5) to prevent gaps on the horizon
+            m.visible = dot > -0.5;
+
+            // Highly Relaxed Frustum Culling (NDC projection)
+            if (m.visible) {
+                const clipPos = vec4.fromValues(worldCentroid[0], worldCentroid[1], worldCentroid[2], 1.0);
+                vec4.transformMat4(clipPos, clipPos, this.scene.vp);
+                const ndcX = clipPos[0] / clipPos[3];
+                const ndcY = clipPos[1] / clipPos[3];
+                const ndcZ = clipPos[2] / clipPos[3];
+
+                // Huge 4.0 margin to ensure patches intersecting the camera are never culled
+                if (Math.abs(ndcX) > 4.0 || Math.abs(ndcY) > 4.0 || ndcZ > 1.2) {
+                    m.visible = false;
+                }
+            }
+
             // Height above surface: planet is radius 4.0
             const height = Math.max(0, dist - 4.0);
-            
-            // Logarithmic mapping tuned for faster drop-off
-            // 0 (high detail) only when very close (< 0.5 units above surface)
-            // drops to 9 (lowest detail) faster
             let lod = Math.log2(height * 20.0 + 0.1) + 3.0;
             m.currentLod = Math.max(0, Math.min(9.9, lod));
         }
 
         // Calculate and display Nanite-typical stats
         const totalMeshlets = this.meshlets.length;
-        let totalVertices = 0;
+        let visibleMeshlets = 0;
+        let rasterizedVertices = 0;
         let avgLod = 0;
         let densityCounts = Array(10).fill(0);
 
         for (const m of this.meshlets) {
+            if (!m.visible) continue;
+            
+            visibleMeshlets++;
             const lodIdx = Math.floor(m.currentLod);
-            totalVertices += m.lodCounts[lodIdx];
+            rasterizedVertices += m.lodCounts[lodIdx];
             avgLod += m.currentLod;
             densityCounts[lodIdx]++;
         }
-        avgLod /= totalMeshlets;
+        
+        // Theoretical max vertices if all meshlets were at full detail
+        const theoreticalFullDetail = totalMeshlets * this.meshlets[0].lodCounts[0];
+        const savings = (1.0 - (rasterizedVertices / theoreticalFullDetail)) * 100;
+
+        avgLod = visibleMeshlets > 0 ? avgLod / visibleMeshlets : 0;
 
         const stats: StatProperty[] = [
             { label: 'Total Meshlets', value: totalMeshlets },
-            { label: 'Active Vertices', value: totalVertices.toLocaleString(), color: '#00ffcc' },
-            { label: 'Avg LOD Level', value: avgLod.toFixed(2), color: avgLod < 4 ? '#00ff00' : '#ffcc00' },
-            { label: 'Highest Density', value: densityCounts[0], color: '#00ff00' },
-            { label: 'Lowest Density', value: densityCounts[9], color: '#ff00ff' }
+            { label: 'Visible Meshlets', value: visibleMeshlets, color: '#00ffcc' },
+            { label: 'Rasterized Vertices', value: rasterizedVertices.toLocaleString(), color: '#00ffcc' },
+            { label: 'Geometry Savings', value: savings.toFixed(1) + '%', color: '#00ff00' },
+            { label: 'Theoretical High-Res', value: theoreticalFullDetail.toLocaleString(), color: '#666' },
+            { label: 'Avg LOD Level', value: avgLod.toFixed(2), color: avgLod < 4 ? '#00ff00' : '#ffcc00' }
         ];
         this.statsWindow.update(stats);
 

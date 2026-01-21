@@ -263,6 +263,30 @@ class PlanetaryPhysicsArticle {
         this.camDist += this.input.mouse.wheel * 0.01;
         this.camDist = Math.max(5, Math.min(50, this.camDist));
 
+        if (this.isFirstPerson) {
+            const eye = vec3.fromValues(this.lander.transform[12], this.lander.transform[13], this.lander.transform[14]);
+            const up = vec3.fromValues(this.lander.transform[4], this.lander.transform[5], this.lander.transform[6]);
+            const right = vec3.fromValues(this.lander.transform[0], this.lander.transform[1], this.lander.transform[2]);
+            vec3.scaleAndAdd(eye, eye, up, 0.45);
+            const pq = quat.create(); quat.setAxisAngle(pq, right, this.fpPitch);
+            const yq = quat.create(); quat.setAxisAngle(yq, up, this.fpYaw);
+            const combined = quat.create(); quat.multiply(combined, yq, pq);
+            const viewFwd = vec3.fromValues(-this.lander.transform[8], -this.lander.transform[9], -this.lander.transform[10]);
+            vec3.transformQuat(viewFwd, viewFwd, combined);
+            vec3.copy(this.scene.cameraPos, eye); vec3.add(this.scene.cameraTarget, eye, viewFwd); vec3.copy(this.scene.cameraUp, up);
+        } else {
+            this.scene.cameraPos[0] = this.camDist * Math.sin(this.camTheta) * Math.cos(this.camPhi);
+            this.scene.cameraPos[1] = this.camDist * Math.cos(this.camTheta);
+            this.scene.cameraPos[2] = this.camDist * Math.sin(this.camTheta) * Math.sin(this.camPhi);
+            vec3.set(this.scene.cameraTarget, 0, 0, 0); vec3.set(this.scene.cameraUp, 0, 1, 0);
+        }
+
+        // Update View-Projection matrix for culling
+        const aspect = this.canvas.clientWidth / this.canvas.clientHeight;
+        mat4.perspective(this.scene.proj, Math.PI / 4, aspect, 0.1, 1000);
+        mat4.lookAt(this.scene.view, this.scene.cameraPos, this.scene.cameraTarget, this.scene.cameraUp);
+        mat4.multiply(this.scene.vp, this.scene.proj, this.scene.view);
+
         const planetRot = time * 0.2;
         mat4.identity(this.planet.transform);
         mat4.rotateZ(this.planet.transform, this.planet.transform, this.physics.axialTilt);
@@ -273,8 +297,26 @@ class PlanetaryPhysicsArticle {
                 mat4.copy(m.transform, this.planet.transform);
                 const worldCentroid = vec3.transformMat4(vec3.create(), m.centroid, m.transform);
                 const dist = vec3.distance(this.scene.cameraPos, worldCentroid);
+                
+                // Horizon Culling
+                const viewDir = vec3.sub(vec3.create(), this.scene.cameraPos, worldCentroid);
+                vec3.normalize(viewDir, viewDir);
+                const normal = vec3.normalize(vec3.create(), worldCentroid);
+                const dot = vec3.dot(viewDir, normal);
+                m.visible = dot > -0.5;
+
+                // Frustum Culling
+                if (m.visible) {
+                    const clipPos = vec4.fromValues(worldCentroid[0], worldCentroid[1], worldCentroid[2], 1.0);
+                    vec4.transformMat4(clipPos, clipPos, this.scene.vp);
+                    const ndcX = clipPos[0] / clipPos[3];
+                    const ndcY = clipPos[1] / clipPos[3];
+                    const ndcZ = clipPos[2] / clipPos[3];
+                    if (Math.abs(ndcX) > 4.0 || Math.abs(ndcY) > 4.0 || ndcZ > 1.2) m.visible = false;
+                }
+
                 const height = Math.max(0, dist - 4.0);
-                let lod = Math.log2(height * 10.0 + 0.1) + 3.0; // Adjusted for 10 levels
+                let lod = Math.log2(height * 10.0 + 0.1) + 3.0;
                 m.currentLod = Math.max(0, Math.min(9.9, lod));
             }
         }
@@ -301,6 +343,24 @@ class PlanetaryPhysicsArticle {
                 mat4.copy(m.transform, this.moon.transform);
                 const worldCentroid = vec3.transformMat4(vec3.create(), m.centroid, m.transform);
                 const dist = vec3.distance(this.scene.cameraPos, worldCentroid);
+                
+                // Horizon Culling
+                const viewDir = vec3.sub(vec3.create(), this.scene.cameraPos, worldCentroid);
+                vec3.normalize(viewDir, viewDir);
+                const normal = vec3.normalize(vec3.create(), worldCentroid);
+                const dot = vec3.dot(viewDir, normal);
+                m.visible = dot > -0.5;
+
+                // Frustum Culling
+                if (m.visible) {
+                    const clipPos = vec4.fromValues(worldCentroid[0], worldCentroid[1], worldCentroid[2], 1.0);
+                    vec4.transformMat4(clipPos, clipPos, this.scene.vp);
+                    const ndcX = clipPos[0] / clipPos[3];
+                    const ndcY = clipPos[1] / clipPos[3];
+                    const ndcZ = clipPos[2] / clipPos[3];
+                    if (Math.abs(ndcX) > 4.0 || Math.abs(ndcY) > 4.0 || ndcZ > 1.2) m.visible = false;
+                }
+
                 // Moon is radius 4.0 * 0.4 = 1.6
                 const height = Math.max(0, dist - 1.6);
                 let lod = Math.log2(height * 10.0 + 0.1) + 3.0;
@@ -311,23 +371,6 @@ class PlanetaryPhysicsArticle {
         mat4.identity(this.moonOrbit.transform);
         mat4.rotateZ(this.moonOrbit.transform, this.moonOrbit.transform, moonInclination);
 
-        if (this.isFirstPerson) {
-            const eye = vec3.fromValues(this.lander.transform[12], this.lander.transform[13], this.lander.transform[14]);
-            const up = vec3.fromValues(this.lander.transform[4], this.lander.transform[5], this.lander.transform[6]);
-            const right = vec3.fromValues(this.lander.transform[0], this.lander.transform[1], this.lander.transform[2]);
-            vec3.scaleAndAdd(eye, eye, up, 0.45);
-            const pq = quat.create(); quat.setAxisAngle(pq, right, this.fpPitch);
-            const yq = quat.create(); quat.setAxisAngle(yq, up, this.fpYaw);
-            const combined = quat.create(); quat.multiply(combined, yq, pq);
-            const viewFwd = vec3.fromValues(-this.lander.transform[8], -this.lander.transform[9], -this.lander.transform[10]);
-            vec3.transformQuat(viewFwd, viewFwd, combined);
-            vec3.copy(this.scene.cameraPos, eye); vec3.add(this.scene.cameraTarget, eye, viewFwd); vec3.copy(this.scene.cameraUp, up);
-        } else {
-            this.scene.cameraPos[0] = this.camDist * Math.sin(this.camTheta) * Math.cos(this.camPhi);
-            this.scene.cameraPos[1] = this.camDist * Math.cos(this.camTheta);
-            this.scene.cameraPos[2] = this.camDist * Math.sin(this.camTheta) * Math.sin(this.camPhi);
-            vec3.set(this.scene.cameraTarget, 0, 0, 0); vec3.set(this.scene.cameraUp, 0, 1, 0);
-        }
         this.input.resetFrame();
     }
 
