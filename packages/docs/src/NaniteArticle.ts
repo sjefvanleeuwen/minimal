@@ -5,7 +5,7 @@ import { GeometryFactory } from './geometry';
 import { InputController } from './input';
 import { meshletWgsl } from './shaders';
 
-class MeshletNode extends MeshNode {
+export class MeshletNode extends MeshNode {
     customPipeline: GPURenderPipeline;
     meshletId: number;
     lodBuffers: GPUBuffer[] = [];
@@ -87,7 +87,7 @@ export class NaniteArticle {
                     const patchSize = 2.0 / subdivisions;
                     const u = -1.0 + (x + 0.5) * patchSize;
                     const v = -1.0 + (y + 0.5) * patchSize;
-                    const center = this.projectPoint(face, u, v, radius);
+                    const center = GeometryFactory.projectPoint(face, u, v, radius);
                     
                     const id = face * (subdivisions * subdivisions) + (y * subdivisions) + x;
                     const node = new MeshletNode(`Meshlet_${id}`, this.renderer, id, vec3.fromValues(center[0], center[1], center[2]));
@@ -95,7 +95,7 @@ export class NaniteArticle {
                     // 10 Levels of detail: from 48x48 down to 1x1
                     const densities = [48, 32, 24, 16, 12, 8, 6, 4, 2, 1]; 
                     for (const d of densities) {
-                        const data = this.createPatch(face, x, y, subdivisions, radius, d);
+                        const data = GeometryFactory.createPatch(face, x, y, subdivisions, radius, d);
                         node.addLod(this.renderer.createBuffer(data), data.length / 3);
                     }
                     
@@ -104,39 +104,6 @@ export class NaniteArticle {
                 }
             }
         }
-    }
-
-    private projectPoint(face: number, u: number, v: number, radius: number) {
-        let x, y, z;
-        if (face === 0) { x = 1; y = v; z = -u; }
-        else if (face === 1) { x = -1; y = v; z = u; }
-        else if (face === 2) { x = u; y = 1; z = -v; }
-        else if (face === 3) { x = u; y = -1; z = v; }
-        else if (face === 4) { x = u; y = v; z = 1; }
-        else { x = -u; y = v; z = -1; }
-        const len = Math.sqrt(x*x + y*y + z*z);
-        return [x/len * radius, y/len * radius, z/len * radius];
-    }
-
-    private createPatch(face: number, px: number, py: number, res: number, radius: number, grid: number): Float32Array {
-        const data: number[] = [];
-        const patchSize = 2.0 / res;
-        const startX = -1.0 + px * patchSize;
-        const startY = -1.0 + py * patchSize;
-        const gStep = patchSize / grid;
-
-        for (let i = 0; i < grid; i++) {
-            for (let j = 0; j < grid; j++) {
-                const u1 = startX + i * gStep, u2 = startX + (i+1) * gStep;
-                const v1 = startY + j * gStep, v2 = startY + (j+1) * gStep;
-                const p1 = this.projectPoint(face, u1, v1, radius);
-                const p2 = this.projectPoint(face, u2, v1, radius);
-                const p3 = this.projectPoint(face, u2, v2, radius);
-                const p4 = this.projectPoint(face, u1, v2, radius);
-                data.push(...p1, ...p2, ...p3, ...p3, ...p4, ...p1);
-            }
-        }
-        return new Float32Array(data);
     }
 
     update() {

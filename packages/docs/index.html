@@ -149,10 +149,20 @@
             <canvas id="gravity-canvas"></canvas>
             <div class="caption">
                 <strong>1. The Geodesic Local Frame (Orange Lander):</strong> Pinned to the surface by radial gravity. While the planet rotates with an <strong>axial tilt of 23.5°</strong>, the lander preserves its position relative to the surface manifold. Use <strong>WASD keys</strong> to navigate its local spherical coordinates. Movement correctly persists across the <strong>planetary poles</strong> via longitude flipping ($+\pi$).<br><br>
-                <strong>2. The Orbital Frame (Grey Moon):</strong> Maintains equilibrium through centripetal acceleration ($\omega = \sqrt{GM/r^3}$). It follows an <strong>elliptical trajectory</strong> and is <strong>tidally locked</strong>, meaning its rotation period matches its orbital period.<br><br>
+                <strong>2. The Orbital Frame (Grey Moon):</strong> Maintains equilibrium through centripetal acceleration ($\omega = \sqrt{GM/r^3$). It follows an <strong>elliptical trajectory</strong> and is <strong>tidally locked</strong>, meaning its rotation period matches its orbital period.<br><br>
                 <strong>3. The Global Frame (Yellow Satellite):</strong> A world-space stationary observer. It must constantly "fire engines" (upward yellow vector) to counteract the inward pull of gravity (red vector).<br><br>
                 <strong>4. Technical Indicators:</strong> The <strong>Red Axis</strong> marks the planetary poles. The **Inverse Square Law** is visualized by the length of the radial vectors.
                 <strong>Interaction:</strong> Click and drag to <strong>Mouse Look</strong>. Scroll to <strong>Zoom</strong>.
+            </div>
+        </div>
+
+        <div class="illustration-card">
+            <div class="label-tag">Live Schematic: FIG A.02 (Nanite)</div>
+            <canvas id="gravity-nanite-canvas"></canvas>
+            <div class="caption">
+                <strong>Virtualized Geometry Integration:</strong> This version of the simulation utilizes <strong>Nanite-style meshlet clustering</strong> for the planetary body. Even with millions of polygons, the engine maintains a constant 60 FPS by only rendering clusters that are visible and relevant to the current pixel density.<br><br>
+                <strong>Dynamic LOD:</strong> Notice how the surface detail remains perfectly sharp as you descend from orbit to the surface. The geometry is streamed and updated in real-time, eliminating the need for traditional discrete LOD levels.
+                <strong>Interaction:</strong> Click and drag to <strong>Rotate</strong>. Scroll to <strong>Zoom</strong>.
             </div>
         </div>
 

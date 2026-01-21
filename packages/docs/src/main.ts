@@ -5,7 +5,7 @@ import { GeometryFactory } from './geometry';
 import { InputController } from './input';
 import { PlanetaryPhysics } from './physics';
 import { PlanetTexturingArticle } from './PlanetTexturingArticle';
-import { NaniteArticle } from './NaniteArticle';
+import { NaniteArticle, MeshletNode } from './NaniteArticle';
 
 /**
  * Custom Node for Gravity Force Vectors
@@ -54,6 +54,8 @@ class PlanetaryPhysicsArticle {
     physics = new PlanetaryPhysics();
     
     planet!: MeshNode;
+    planetMeshlets: MeshletNode[] = [];
+    moonMeshlets: MeshletNode[] = [];
     lander!: MeshNode;
     satellite!: MeshNode;
     grid!: MeshNode;
@@ -71,7 +73,7 @@ class PlanetaryPhysicsArticle {
     fpPitch = -0.5;
     running = false;
 
-    constructor(canvasId: string) {
+    constructor(canvasId: string, public useNanite = false) {
         this.canvas = document.getElementById(canvasId) as HTMLCanvasElement;
         window.addEventListener('keydown', (e) => {
             if (e.code === 'KeyV' && this.running) this.isFirstPerson = !this.isFirstPerson;
@@ -105,9 +107,62 @@ class PlanetaryPhysicsArticle {
         mat4.scale(this.sun.transform, this.sun.transform, [10, 10, 10]);
         this.scene.add(this.sun);
 
-        this.planet = new MeshNode('Planet', sphereBuf, sphereData.length / 3);
-        this.planet.color = [0, 0.8, 0.7, 1];
-        this.scene.add(this.planet);
+        if (this.useNanite) {
+            const subdivisions = 4;
+            const densities = [48, 32, 24, 16, 12, 8, 6, 4, 2, 1]; 
+            
+            // Planet Meshlets
+            for (let face = 0; face < 6; face++) {
+                for (let y = 0; y < subdivisions; y++) {
+                    for (let x = 0; x < subdivisions; x++) {
+                        const patchSize = 2.0 / subdivisions;
+                        const u = -1.0 + (x + 0.5) * patchSize;
+                        const v = -1.0 + (y + 0.5) * patchSize;
+                        const center = GeometryFactory.projectPoint(face, u, v, 4);
+                        const id = face * (subdivisions * subdivisions) + (y * subdivisions) + x;
+                        const node = new MeshletNode(`PlanetMeshlet_${id}`, this.renderer, id, vec3.fromValues(center[0], center[1], center[2]));
+                        for (const d of densities) {
+                            const data = GeometryFactory.createPatch(face, x, y, subdivisions, 4, d);
+                            node.addLod(this.renderer.createBuffer(data), data.length / 3);
+                        }
+                        node.color = [0, 0.8, 0.7, 1];
+                        this.planetMeshlets.push(node);
+                        this.scene.add(node);
+                    }
+                }
+            }
+
+            // Moon Meshlets
+            for (let face = 0; face < 6; face++) {
+                for (let y = 0; y < subdivisions; y++) {
+                    for (let x = 0; x < subdivisions; x++) {
+                        const patchSize = 2.0 / subdivisions;
+                        const u = -1.0 + (x + 0.5) * patchSize;
+                        const v = -1.0 + (y + 0.5) * patchSize;
+                        const center = GeometryFactory.projectPoint(face, u, v, 4); // Radius 4, will be scaled to 0.4 later
+                        const id = face * (subdivisions * subdivisions) + (y * subdivisions) + x;
+                        const node = new MeshletNode(`MoonMeshlet_${id}`, this.renderer, id, vec3.fromValues(center[0], center[1], center[2]));
+                        for (const d of densities) {
+                            const data = GeometryFactory.createPatch(face, x, y, subdivisions, 4, d);
+                            node.addLod(this.renderer.createBuffer(data), data.length / 3);
+                        }
+                        node.color = [0.7, 0.7, 0.7, 1];
+                        this.moonMeshlets.push(node);
+                        this.scene.add(node);
+                    }
+                }
+            }
+            this.planet = new MeshNode('PlanetProxy', sphereBuf, 0);
+            this.moon = new MeshNode('MoonProxy', sphereBuf, 0);
+        } else {
+            this.planet = new MeshNode('Planet', sphereBuf, sphereData.length / 3);
+            this.planet.color = [0, 0.8, 0.7, 1];
+            this.scene.add(this.planet);
+
+            this.moon = new MeshNode('Moon', sphereBuf, sphereData.length / 3);
+            this.moon.color = [0.7, 0.7, 0.7, 1];
+            this.scene.add(this.moon);
+        }
 
         this.axis = new MeshNode('Axis', axisBuf, 2, true);
         this.axis.color = [1, 0.1, 0.1, 1];
@@ -121,10 +176,6 @@ class PlanetaryPhysicsArticle {
         this.lander = new MeshNode('Lander', pyramidBuf, pyramidData.length / 3);
         this.lander.color = [1, 0.5, 0, 1];
         this.scene.add(this.lander);
-
-        this.moon = new MeshNode('Moon', sphereBuf, sphereData.length / 3);
-        this.moon.color = [0.7, 0.7, 0.7, 1];
-        this.scene.add(this.moon);
 
         const segments = 128;
         const moonA = 10.0; const moonB = 8.5;
@@ -172,6 +223,18 @@ class PlanetaryPhysicsArticle {
         mat4.identity(this.planet.transform);
         mat4.rotateZ(this.planet.transform, this.planet.transform, this.physics.axialTilt);
         mat4.rotateY(this.planet.transform, this.planet.transform, planetRot);
+
+        if (this.useNanite) {
+            for (const m of this.planetMeshlets) {
+                mat4.copy(m.transform, this.planet.transform);
+                const worldCentroid = vec3.transformMat4(vec3.create(), m.centroid, m.transform);
+                const dist = vec3.distance(this.scene.cameraPos, worldCentroid);
+                const height = Math.max(0, dist - 4.0);
+                let lod = Math.log2(height * 10.0 + 0.1) + 3.0; // Adjusted for 10 levels
+                m.currentLod = Math.max(0, Math.min(9.9, lod));
+            }
+        }
+
         mat4.identity(this.axis.transform);
         mat4.rotateZ(this.axis.transform, this.axis.transform, this.physics.axialTilt);
         mat4.identity(this.satellite.transform);
@@ -188,6 +251,19 @@ class PlanetaryPhysicsArticle {
         mat4.translate(this.moon.transform, this.moon.transform, [Math.cos(moonAngle) * moonA, 0, Math.sin(moonAngle) * moonB]);
         mat4.rotateY(this.moon.transform, this.moon.transform, -moonAngle + Math.PI);
         mat4.scale(this.moon.transform, this.moon.transform, [0.4, 0.4, 0.4]);
+
+        if (this.useNanite) {
+            for (const m of this.moonMeshlets) {
+                mat4.copy(m.transform, this.moon.transform);
+                const worldCentroid = vec3.transformMat4(vec3.create(), m.centroid, m.transform);
+                const dist = vec3.distance(this.scene.cameraPos, worldCentroid);
+                // Moon is radius 4.0 * 0.4 = 1.6
+                const height = Math.max(0, dist - 1.6);
+                let lod = Math.log2(height * 10.0 + 0.1) + 3.0;
+                m.currentLod = Math.max(0, Math.min(9.9, lod));
+            }
+        }
+
         mat4.identity(this.moonOrbit.transform);
         mat4.rotateZ(this.moonOrbit.transform, this.moonOrbit.transform, moonInclination);
 
@@ -227,15 +303,17 @@ class PlanetaryPhysicsArticle {
 async function init() {
     const renderer = await WebGPURenderer.create();
     const physicsApp = new PlanetaryPhysicsArticle('gravity-canvas');
+    const nanitePhysicsApp = new PlanetaryPhysicsArticle('gravity-nanite-canvas', true);
     const texturingApp = new PlanetTexturingArticle('texture-canvas');
     const naniteApp = new NaniteArticle('nanite-canvas');
     
     await physicsApp.init(renderer);
+    await nanitePhysicsApp.init(renderer);
     await texturingApp.init(renderer);
     await naniteApp.init(renderer);
     
-    let currentApp: { start(): void, stop(): void } = physicsApp;
-    currentApp.start();
+    let currentApps: { start(): void, stop(): void }[] = [physicsApp, nanitePhysicsApp];
+    currentApps.forEach(app => app.start());
 
     const navItems = document.querySelectorAll('.nav-item');
     navItems.forEach(item => {
@@ -247,12 +325,12 @@ async function init() {
             document.querySelectorAll('.article-content').forEach(c => c.classList.remove('active'));
             document.getElementById(`${article}-article`)?.classList.add('active');
             
-            currentApp.stop();
-            if (article === 'physics') currentApp = physicsApp;
-            else if (article === 'texturing') currentApp = texturingApp;
-            else currentApp = naniteApp;
+            currentApps.forEach(app => app.stop());
+            if (article === 'physics') currentApps = [physicsApp, nanitePhysicsApp];
+            else if (article === 'texturing') currentApps = [texturingApp];
+            else currentApps = [naniteApp];
             
-            currentApp.start();
+            currentApps.forEach(app => app.start());
         });
     });
 }

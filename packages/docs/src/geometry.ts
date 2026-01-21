@@ -48,4 +48,37 @@ export class GeometryFactory {
         }
         return new Float32Array(data);
     }
+
+    static projectPoint(face: number, u: number, v: number, radius: number) {
+        let x, y, z;
+        if (face === 0) { x = 1; y = v; z = -u; }
+        else if (face === 1) { x = -1; y = v; z = u; }
+        else if (face === 2) { x = u; y = 1; z = -v; }
+        else if (face === 3) { x = u; y = -1; z = v; }
+        else if (face === 4) { x = u; y = v; z = 1; }
+        else { x = -u; y = v; z = -1; }
+        const len = Math.sqrt(x*x + y*y + z*z);
+        return [x/len * radius, y/len * radius, z/len * radius];
+    }
+
+    static createPatch(face: number, px: number, py: number, res: number, radius: number, grid: number): Float32Array {
+        const data: number[] = [];
+        const patchSize = 2.0 / res;
+        const startX = -1.0 + px * patchSize;
+        const startY = -1.0 + py * patchSize;
+        const gStep = patchSize / grid;
+
+        for (let i = 0; i < grid; i++) {
+            for (let j = 0; j < grid; j++) {
+                const u1 = startX + i * gStep, u2 = startX + (i+1) * gStep;
+                const v1 = startY + j * gStep, v2 = startY + (j+1) * gStep;
+                const p1 = this.projectPoint(face, u1, v1, radius);
+                const p2 = this.projectPoint(face, u2, v1, radius);
+                const p3 = this.projectPoint(face, u2, v2, radius);
+                const p4 = this.projectPoint(face, u1, v2, radius);
+                data.push(...p1, ...p2, ...p3, ...p3, ...p4, ...p1);
+            }
+        }
+        return new Float32Array(data);
+    }
 }
