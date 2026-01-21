@@ -14,15 +14,16 @@ class ProceduralPlanetNode extends MeshNode {
         this.customPipeline = renderer.createRenderPipeline(module, 'triangle-list');
     }
 
-    render(renderer: WebGPURenderer, pass: GPURenderPassEncoder, vp: mat4, time: number): void {
-        const uboData = new Float32Array(40);
+    render(renderer: WebGPURenderer, pass: GPURenderPassEncoder, vp: mat4, cameraPos: vec3, time: number): void {
+        const uboData = new Float32Array(44);
         uboData.set(vp, 0);
         uboData.set(this.transform, 16);
         uboData.set(this.color, 32);
-        uboData[36] = time;
-        uboData[37] = this.opacity;
-        // p2 is zoom in this shader
-        uboData[39] = 1.0; 
+        uboData.set(cameraPos, 36);
+        uboData[39] = time;
+        uboData[40] = this.opacity;
+        // params.y is zoom here
+        uboData[41] = 1.0; 
 
         const ubo = renderer.createUniformBuffer(uboData);
         const bg = renderer.device.createBindGroup({

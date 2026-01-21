@@ -10,7 +10,7 @@ export abstract class SceneNode {
 
     constructor(public name: string) {}
 
-    abstract render(renderer: WebGPURenderer, pass: GPURenderPassEncoder, vp: mat4, time: number): void;
+    abstract render(renderer: WebGPURenderer, pass: GPURenderPassEncoder, vp: mat4, cameraPos: vec3, time: number): void;
     
     update(dt: number) {}
 }
@@ -25,16 +25,17 @@ export class MeshNode extends SceneNode {
         super(name);
     }
 
-    render(renderer: WebGPURenderer, pass: GPURenderPassEncoder, vp: mat4, time: number): void {
+    render(renderer: WebGPURenderer, pass: GPURenderPassEncoder, vp: mat4, cameraPos: vec3, time: number): void {
         if (!this.visible) return;
 
-        const uboData = new Float32Array(40);
+        const uboData = new Float32Array(44);
         uboData.set(vp, 0);
         uboData.set(this.transform, 16);
         uboData.set(this.color, 32);
-        uboData[36] = time;
-        uboData[37] = this.opacity;
-        uboData[39] = this.flat ? 1.0 : 0.0;
+        uboData.set(cameraPos, 36);
+        uboData[39] = time;
+        uboData[40] = this.opacity;
+        uboData[42] = this.flat ? 1.0 : 0.0;
 
         const ubo = renderer.createUniformBuffer(uboData);
         const bg = renderer.device.createBindGroup({
@@ -78,7 +79,7 @@ export class SceneManager {
 
         this.renderer.render(canvas, (pass) => {
             for (const node of this.nodes) {
-                node.render(this.renderer, pass, this.vp, time);
+                node.render(this.renderer, pass, this.vp, this.cameraPos, time);
             }
         });
     }

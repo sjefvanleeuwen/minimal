@@ -15,7 +15,7 @@ class ForceVectorNode extends SceneNode {
         this.flat = true;
     }
 
-    render(renderer: WebGPURenderer, pass: GPURenderPassEncoder, vp: mat4, time: number): void {
+    render(renderer: WebGPURenderer, pass: GPURenderPassEncoder, vp: mat4, cameraPos: vec3, time: number): void {
         const pos = vec3.fromValues(this.targetNode.transform[12], this.targetNode.transform[13], this.targetNode.transform[14]);
         const dist = vec3.length(pos);
         if (dist < 0.001) return;
@@ -23,12 +23,14 @@ class ForceVectorNode extends SceneNode {
         const forceVec = new Float32Array([pos[0], pos[1], pos[2], pos[0] * (1 - forceMag), pos[1] * (1 - forceMag), pos[2] * (1 - forceMag)]);
         
         const lb = renderer.createBuffer(forceVec);
-        const uboData = new Float32Array(40);
+        const uboData = new Float32Array(44);
         uboData.set(vp, 0);
         uboData.set(mat4.create(), 16);
         uboData.set(this.colorVec, 32);
-        uboData[37] = 1.0;
-        uboData[39] = 1.0;
+        uboData.set(cameraPos, 36);
+        uboData[39] = time;
+        uboData[40] = 1.0;
+        uboData[42] = 1.0;
 
         const ubo = renderer.createUniformBuffer(uboData);
         const bg = renderer.device.createBindGroup({
