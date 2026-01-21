@@ -67,6 +67,7 @@
             height: 500px;
             display: block;
             image-rendering: crisp-edges;
+            touch-action: none;
         }
         .caption {
             padding: 1.5rem;
@@ -95,30 +96,87 @@
             max-width: 70ch;
         }
         strong { color: #fff; }
+        .nav-menu {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: rgba(13, 17, 23, 0.8);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid #30363d;
+            padding: 1rem 2rem;
+            z-index: 1000;
+            display: flex;
+            gap: 2rem;
+            justify-content: center;
+        }
+        .nav-item {
+            color: #8b949e;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: color 0.2s;
+        }
+        .nav-item:hover, .nav-item.active {
+            color: #00ffcc;
+        }
+        .article-content {
+            display: none;
+        }
+        .article-content.active {
+            display: block;
+        }
     </style>
 </head>
 <body>
-    <span class="subtitle">Technical Monograph #01</span>
-    <h1>Planetary Physics</h1>
-    <p>Architecture of spherical simulations and orbital dynamics using the Jolt Physics engine.</p>
+    <nav class="nav-menu">
+        <a class="nav-item active" data-article="physics">Planetary Physics</a>
+        <a class="nav-item" data-article="texturing">Planet Texturing</a>
+    </nav>
 
-    <h2>The Unified Planetary Reference Frame</h2>
-    <p>Simulating physics at a planetary scale requires bridging the gap between three distinct navigational domains. This schematic demonstrates how these frames interact within a singular radial gravity field ($1/r^2$).</p>
-    
-    <div class="illustration-card">
-        <div class="label-tag">Live Schematic: FIG A.01</div>
-        <canvas id="gravity-canvas"></canvas>
-        <div class="caption">
-            <strong>1. The Geodesic Local Frame (Orange Lander):</strong> Pinned to the surface by radial gravity. While the planet rotates with an <strong>axial tilt of 23.5°</strong>, the lander preserves its position relative to the surface manifold. Use <strong>WASD keys</strong> to navigate its local spherical coordinates. Movement correctly persists across the <strong>planetary poles</strong> via longitude flipping ($+\pi$).<br><br>
-            <strong>2. The Orbital Frame (Grey Moon):</strong> Maintains equilibrium through centripetal acceleration ($\omega = \sqrt{GM/r^3}$). It follows an <strong>elliptical trajectory</strong> and is <strong>tidally locked</strong>, meaning its rotation period matches its orbital period.<br><br>
-            <strong>3. The Global Frame (Yellow Satellite):</strong> A world-space stationary observer. It must constantly "fire engines" (upward yellow vector) to counteract the inward pull of gravity (red vector).<br><br>
-            <strong>4. Technical Indicators:</strong> The <strong>Red Axis</strong> marks the planetary poles. The **Inverse Square Law** is visualized by the length of the radial vectors.
-            <strong>Interaction:</strong> Click and drag to <strong>Mouse Look</strong>. Scroll to <strong>Zoom</strong>.
+    <div id="physics-article" class="article-content active">
+        <span class="subtitle">Technical Monograph #01</span>
+        <h1>Planetary Physics</h1>
+        <p>Architecture of spherical simulations and orbital dynamics using the Jolt Physics engine.</p>
+
+        <h2>The Unified Planetary Reference Frame</h2>
+        <p>Simulating physics at a planetary scale requires bridging the gap between three distinct navigational domains. This schematic demonstrates how these frames interact within a singular radial gravity field ($1/r^2$).</p>
+        
+        <div class="illustration-card">
+            <div class="label-tag">Live Schematic: FIG A.01</div>
+            <canvas id="gravity-canvas"></canvas>
+            <div class="caption">
+                <strong>1. The Geodesic Local Frame (Orange Lander):</strong> Pinned to the surface by radial gravity. While the planet rotates with an <strong>axial tilt of 23.5°</strong>, the lander preserves its position relative to the surface manifold. Use <strong>WASD keys</strong> to navigate its local spherical coordinates. Movement correctly persists across the <strong>planetary poles</strong> via longitude flipping ($+\pi$).<br><br>
+                <strong>2. The Orbital Frame (Grey Moon):</strong> Maintains equilibrium through centripetal acceleration ($\omega = \sqrt{GM/r^3}$). It follows an <strong>elliptical trajectory</strong> and is <strong>tidally locked</strong>, meaning its rotation period matches its orbital period.<br><br>
+                <strong>3. The Global Frame (Yellow Satellite):</strong> A world-space stationary observer. It must constantly "fire engines" (upward yellow vector) to counteract the inward pull of gravity (red vector).<br><br>
+                <strong>4. Technical Indicators:</strong> The <strong>Red Axis</strong> marks the planetary poles. The **Inverse Square Law** is visualized by the length of the radial vectors.
+                <strong>Interaction:</strong> Click and drag to <strong>Mouse Look</strong>. Scroll to <strong>Zoom</strong>.
+            </div>
+        </div>
+
+        <div class="math">
+            \vec{F}_g = \frac{G M m}{r^2} \hat{r}
         </div>
     </div>
 
-    <div class="math">
-        \vec{F}_g = \frac{G M m}{r^2} \hat{r}
+    <div id="texturing-article" class="article-content">
+        <span class="subtitle">Technical Monograph #02</span>
+        <h1>Planet Texturing</h1>
+        <p>Procedural terrain generation and spherical mapping on the GPU.</p>
+
+        <h2>GPU-Driven Procedural Manifolds</h2>
+        <p>Generating photo-realistic planetary surfaces requires high-frequency detail that scales with the observer's distance. This simulation uses WebGPU compute and fragment shaders to generate multi-octave FBM (Fractional Brownian Motion) noise directly on the GPU.</p>
+
+        <div class="illustration-card">
+            <div class="label-tag">Live Schematic: FIG B.01</div>
+            <canvas id="texture-canvas"></canvas>
+            <div class="caption">
+                <strong>Procedural Surfaces:</strong> The planet's surface is generated entirely through mathematical functions. We use a 3D Simplex-based noise function mapped to a unit sphere.<br><br>
+                <strong>LOD & Detail:</strong> As you zoom in, the shader recalculates high-frequency harmonics, ensuring the "Infinite Coastline" remains sharp and detailed even at extreme close-ups.
+                <strong>Interaction:</strong> Click and drag to <strong>Rotate</strong>. Scroll to <strong>Zoom</strong>.
+            </div>
+        </div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

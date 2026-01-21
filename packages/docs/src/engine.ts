@@ -25,8 +25,6 @@ export class WebGPURenderer implements Renderer {
         renderer.device = device;
         renderer.format = navigator.gpu.getPreferredCanvasFormat();
         
-        const module = device.createShaderModule({ label: 'Main Shader Module', code: wgsl });
-        
         renderer.bindGroupLayout = device.createBindGroupLayout({
             label: 'Main Bind Group Layout',
             entries: [{
@@ -36,12 +34,19 @@ export class WebGPURenderer implements Renderer {
             }]
         });
 
-        const pipelineLayout = device.createPipelineLayout({
-            label: 'Main Pipeline Layout',
-            bindGroupLayouts: [renderer.bindGroupLayout]
+        const module = device.createShaderModule({ label: 'Main Shader Module', code: wgsl });
+        renderer.pipeline = renderer.createRenderPipeline(module, 'triangle-list');
+        renderer.linePipeline = renderer.createRenderPipeline(module, 'line-list');
+
+        return renderer;
+    }
+
+    createRenderPipeline(module: GPUShaderModule, topology: GPUPrimitiveTopology): GPURenderPipeline {
+        const pipelineLayout = this.device.createPipelineLayout({
+            bindGroupLayouts: [this.bindGroupLayout]
         });
 
-        const pipelineDescriptor: GPURenderPipelineDescriptor = {
+        return this.device.createRenderPipeline({
             layout: pipelineLayout,
             vertex: {
                 module,
@@ -55,33 +60,20 @@ export class WebGPURenderer implements Renderer {
                 module,
                 entryPoint: 'fs_main',
                 targets: [{ 
-                    format: renderer.format,
+                    format: this.format,
                     blend: {
                         color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
                         alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' }
                     }
                 }]
             },
+            primitive: { topology },
             depthStencil: {
                 depthWriteEnabled: true,
                 depthCompare: 'less',
                 format: 'depth24plus',
             }
-        };
-
-        renderer.pipeline = device.createRenderPipeline({
-            ...pipelineDescriptor,
-            label: 'Main Render Pipeline',
-            primitive: { topology: 'triangle-list' },
         });
-
-        renderer.linePipeline = device.createRenderPipeline({
-            ...pipelineDescriptor,
-            label: 'Line Render Pipeline',
-            primitive: { topology: 'line-list' },
-        });
-
-        return renderer;
     }
 
     render(canvas: HTMLCanvasElement, drawFn: (pass: GPURenderPassEncoder) => void) {
