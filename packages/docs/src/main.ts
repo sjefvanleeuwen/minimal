@@ -1,587 +1,255 @@
 import { mat4, vec3, quat } from 'gl-matrix';
-import { wgsl } from './shaders';
+import { WebGPURenderer } from './engine';
+import { SceneManager, MeshNode, SceneNode } from './scene';
+import { GeometryFactory } from './geometry';
+import { InputController } from './input';
+import { PlanetaryPhysics } from './physics';
 
-class MiniRenderer {
-    device: GPUDevice;
-    pipeline: GPURenderPipeline;
-    linePipeline: GPURenderPipeline;
-    bindGroupLayout: GPUBindGroupLayout;
-    depthTexture: GPUTexture | null = null;
+/**
+ * Custom Node for Gravity Force Vectors
+ */
+class ForceVectorNode extends SceneNode {
+    constructor(name: string, public targetNode: SceneNode, public colorVec: number[]) {
+        super(name);
+        this.flat = true;
+    }
+
+    render(renderer: WebGPURenderer, pass: GPURenderPassEncoder, vp: mat4, time: number): void {
+        const pos = vec3.fromValues(this.targetNode.transform[12], this.targetNode.transform[13], this.targetNode.transform[14]);
+        const dist = vec3.length(pos);
+        const forceMag = 18.0 / (dist * dist);
+        const forceVec = new Float32Array([pos[0], pos[1], pos[2], pos[0] * (1 - forceMag), pos[1] * (1 - forceMag), pos[2] * (1 - forceMag)]);
+        
+        const lb = renderer.createBuffer(forceVec);
+        const uboData = new Float32Array(40);
+        uboData.set(vp, 0);
+        uboData.set(mat4.create(), 16);
+        uboData.set(this.colorVec, 32);
+        uboData[37] = 1.0;
+        uboData[39] = 1.0;
+
+        const ubo = renderer.createUniformBuffer(uboData);
+        const bg = renderer.device.createBindGroup({
+            layout: renderer.bindGroupLayout,
+            entries: [{ binding: 0, resource: { buffer: ubo } }]
+        });
+
+        pass.setPipeline(renderer.linePipeline);
+        pass.setBindGroup(0, bg);
+        pass.setVertexBuffer(0, lb);
+        pass.draw(2);
+        pass.setPipeline(renderer.pipeline);
+    }
+}
+
+class SimulationApp {
+    renderer!: WebGPURenderer;
+    scene!: SceneManager;
+    input = new InputController();
+    physics = new PlanetaryPhysics();
     
-    constructor(device: GPUDevice, pipeline: GPURenderPipeline, linePipeline: GPURenderPipeline, bindGroupLayout: GPUBindGroupLayout) {
-        this.device = device;
-        this.pipeline = pipeline;
-        this.linePipeline = linePipeline;
-        this.bindGroupLayout = bindGroupLayout;
+    // Scene Nodes
+    planet!: MeshNode;
+    lander!: MeshNode;
+    satellite!: MeshNode;
+    grid!: MeshNode;
+    sun!: MeshNode;
+    axis!: MeshNode;
+    moon!: MeshNode;
+    moonOrbit!: MeshNode;
+
+    canvas: HTMLCanvasElement;
+    isFirstPerson = false;
+    camTheta = Math.PI / 4;
+    camPhi = Math.PI / 4;
+    camDist = 18;
+    fpYaw = 0;
+    fpPitch = -0.5;
+
+    constructor(canvasId: string) {
+        this.canvas = document.getElementById(canvasId) as HTMLCanvasElement;
     }
 
-    static async create() {
-        if (!navigator.gpu) throw new Error("WebGPU not supported");
-        const adapter = await navigator.gpu.requestAdapter();
-        if (!adapter) throw new Error("No adapter");
-        const device = await adapter.requestDevice();
+    async init() {
+        this.renderer = await WebGPURenderer.create();
+        this.scene = new SceneManager(this.renderer);
+
+        // Assets
+        const sphereData = GeometryFactory.createSphere(4, 48);
+        const sphereBuf = this.renderer.createBuffer(sphereData);
         
-        const module = device.createShaderModule({ label: 'Main Shader Module', code: wgsl });
-        
-        const bindGroupLayout = device.createBindGroupLayout({
-            label: 'Main Bind Group Layout',
-            entries: [{
-                binding: 0,
-                visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-                buffer: { type: 'uniform' }
-            }]
-        });
+        const dotData = GeometryFactory.createSphere(0.25, 12);
+        const dotBuf = this.renderer.createBuffer(dotData);
 
-        const pipelineLayout = device.createPipelineLayout({
-            label: 'Main Pipeline Layout',
-            bindGroupLayouts: [bindGroupLayout]
-        });
+        const pyramidData = GeometryFactory.createPyramid(0.2);
+        const pyramidBuf = this.renderer.createBuffer(pyramidData);
 
-        const pipeline = device.createRenderPipeline({
-            label: 'Main Render Pipeline',
-            layout: pipelineLayout,
-            vertex: {
-                module,
-                entryPoint: 'vs_main',
-                buffers: [{
-                    arrayStride: 12,
-                    attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }]
-                }]
-            },
-            fragment: {
-                module,
-                entryPoint: 'fs_main',
-                targets: [{ 
-                    format: navigator.gpu.getPreferredCanvasFormat(),
-                    blend: {
-                        color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-                        alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' }
-                    }
-                }]
-            },
-            primitive: { 
-                topology: 'triangle-list',
-            },
-            depthStencil: {
-                depthWriteEnabled: true,
-                depthCompare: 'less',
-                format: 'depth24plus',
-            }
-        });
+        const gridData = GeometryFactory.createGrid(20, 20);
+        const gridBuf = this.renderer.createBuffer(gridData);
 
-        const linePipeline = device.createRenderPipeline({
-            label: 'Line Render Pipeline',
-            layout: pipelineLayout,
-            vertex: {
-                module,
-                entryPoint: 'vs_main',
-                buffers: [{
-                    arrayStride: 12,
-                    attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }]
-                }]
-            },
-            fragment: {
-                module,
-                entryPoint: 'fs_main',
-                targets: [{ 
-                    format: navigator.gpu.getPreferredCanvasFormat(),
-                    blend: {
-                        color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-                        alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' }
-                    }
-                }]
-            },
-            primitive: { 
-                topology: 'line-list',
-            },
-            depthStencil: {
-                depthWriteEnabled: true,
-                depthCompare: 'less',
-                format: 'depth24plus',
-            }
-        });
+        const axisData = new Float32Array([0, -5.5, 0, 0, 5.5, 0]);
+        const axisBuf = this.renderer.createBuffer(axisData);
 
-        return new MiniRenderer(device, pipeline, linePipeline, bindGroupLayout);
-    }
+        // Nodes
+        this.grid = new MeshNode('Grid', gridBuf, gridData.length / 3, true);
+        this.grid.color = [0.2, 0.2, 0.2, 0.4];
+        this.grid.flat = true;
+        this.scene.add(this.grid);
 
-    render(canvas: HTMLCanvasElement, drawFn: (ctx: GPUCommandEncoder, pass: GPURenderPassEncoder) => void) {
-        if (canvas.width !== canvas.clientWidth || canvas.height !== canvas.clientHeight) {
-            canvas.width = canvas.clientWidth;
-            canvas.height = canvas.clientHeight;
-            if (this.depthTexture) {
-                this.depthTexture.destroy();
-                this.depthTexture = null;
-            }
-        }
+        this.sun = new MeshNode('Sun', sphereBuf, sphereData.length / 3);
+        this.sun.color = [1, 0.9, 0.5, 1];
+        this.sun.flat = true;
+        mat4.identity(this.sun.transform);
+        mat4.translate(this.sun.transform, this.sun.transform, [100, 40, 100]);
+        mat4.scale(this.sun.transform, this.sun.transform, [10, 10, 10]);
+        this.scene.add(this.sun);
 
-        const context = canvas.getContext('webgpu')!;
-        // Only configure if not already configured for this canvas (simplified)
-        context.configure({
-            device: this.device,
-            format: navigator.gpu.getPreferredCanvasFormat(),
-            alphaMode: 'premultiplied',
-        });
+        this.planet = new MeshNode('Planet', sphereBuf, sphereData.length / 3);
+        this.planet.color = [0, 0.8, 0.7, 1];
+        this.scene.add(this.planet);
 
-        if (!this.depthTexture) {
-            this.depthTexture = this.device.createTexture({
-                label: 'Main Depth Texture',
-                size: [canvas.width || 1, canvas.height || 1],
-                format: 'depth24plus',
-                usage: GPUTextureUsage.RENDER_ATTACHMENT,
-            });
-        }
+        this.axis = new MeshNode('Axis', axisBuf, 2, true);
+        this.axis.color = [1, 0.1, 0.1, 1];
+        this.axis.flat = true;
+        this.scene.add(this.axis);
 
-        const commandEncoder = this.device.createCommandEncoder({ label: 'Main Command Encoder' });
-        const renderPass = commandEncoder.beginRenderPass({
-            label: 'Main Render Pass',
-            colorAttachments: [{
-                view: context.getCurrentTexture().createView(),
-                clearValue: { r: 0.05, g: 0.07, b: 0.1, a: 1 },
-                loadOp: 'clear',
-                storeOp: 'store',
-            }],
-            depthStencilAttachment: {
-                view: this.depthTexture.createView(),
-                depthClearValue: 1.0,
-                depthLoadOp: 'clear',
-                depthStoreOp: 'store',
-            }
-        });
+        this.satellite = new MeshNode('Satellite', dotBuf, dotData.length / 3);
+        this.satellite.color = [1, 1, 0, 1];
+        this.scene.add(this.satellite);
 
-        renderPass.setPipeline(this.pipeline);
-        drawFn(commandEncoder, renderPass);
-        renderPass.end();
-        this.device.queue.submit([commandEncoder.finish()]);
-    }
-}
+        this.lander = new MeshNode('Lander', pyramidBuf, pyramidData.length / 3);
+        this.lander.color = [1, 0.5, 0, 1];
+        this.scene.add(this.lander);
 
-// Helpers for geometry
-function createSphereTriangles(radius: number, segments: number): Float32Array {
-    const data: number[] = [];
-    for (let j = 0; j < segments; j++) {
-        const theta1 = (j / segments) * Math.PI;
-        const theta2 = ((j + 1) / segments) * Math.PI;
+        this.moon = new MeshNode('Moon', sphereBuf, sphereData.length / 3);
+        this.moon.color = [0.7, 0.7, 0.7, 1];
+        this.scene.add(this.moon);
+
+        // Moon Orbit Path
+        const segments = 128;
+        const moonA = 10.0; const moonB = 8.5;
+        const orbitLines = new Float32Array(segments * 6);
         for (let i = 0; i < segments; i++) {
-            const phi1 = (i / segments) * Math.PI * 2;
-            const phi2 = ((i + 1) / segments) * Math.PI * 2;
-
-            const x1 = radius * Math.sin(theta1) * Math.cos(phi1);
-            const y1 = radius * Math.cos(theta1);
-            const z1 = radius * Math.sin(theta1) * Math.sin(phi1);
-
-            const x2 = radius * Math.sin(theta1) * Math.cos(phi2);
-            const y2 = radius * Math.cos(theta1);
-            const z2 = radius * Math.sin(theta1) * Math.sin(phi2);
-
-            const x3 = radius * Math.sin(theta2) * Math.cos(phi1);
-            const y3 = radius * Math.cos(theta2);
-            const z3 = radius * Math.sin(theta2) * Math.sin(phi1);
-
-            const x4 = radius * Math.sin(theta2) * Math.cos(phi2);
-            const y4 = radius * Math.cos(theta2);
-            const z4 = radius * Math.sin(theta2) * Math.sin(phi2);
-
-            // Correct winding for counter-clockwise
-            data.push(x1, y1, z1, x3, y3, z3, x2, y2, z2);
-            data.push(x2, y2, z2, x3, y3, z3, x4, y4, z4);
+            const a1 = (i / segments) * Math.PI * 2; const a2 = ((i + 1) / segments) * Math.PI * 2;
+            orbitLines[i*6+0] = Math.cos(a1)*moonA; orbitLines[i*6+2] = Math.sin(a1)*moonB;
+            orbitLines[i*6+3] = Math.cos(a2)*moonA; orbitLines[i*6+5] = Math.sin(a2)*moonB;
         }
+        const orbitBuf = this.renderer.createBuffer(orbitLines);
+        this.moonOrbit = new MeshNode('MoonOrbit', orbitBuf, segments * 2, true);
+        this.moonOrbit.color = [1, 1, 0, 0.5];
+        this.moonOrbit.flat = true;
+        this.scene.add(this.moonOrbit);
+
+        // Forces
+        this.scene.add(new ForceVectorNode('LanderForce', this.lander, [1, 0, 0, 1]));
+        this.scene.add(new ForceVectorNode('SatForce', this.satellite, [1, 1, 0, 1]));
+        this.scene.add(new ForceVectorNode('MoonForce', this.moon, [0.7, 0.7, 0.7, 1]));
+
+        this.start();
     }
-    return new Float32Array(data);
-}
 
-function createPyramid(size: number): Float32Array {
-    const s = size;
-    const h = size * 2;
-    return new Float32Array([
-        // Bottom
-        -s, 0, -s,  s, 0, -s,  s, 0, s,
-        -s, 0, -s,  s, 0, s,  -s, 0, s,
-        // Sides
-        0, h, 0,  -s, 0, -s,   s, 0, -s,
-        0, h, 0,   s, 0, -s,   s, 0, s,
-        0, h, 0,   s, 0, s,   -s, 0, s,
-        0, h, 0,  -s, 0, s,   -s, 0, -s,
-    ]);
-}
-
-function createGridLines(size: number, div: number): Float32Array {
-    const data: number[] = [];
-    for (let i = -div; i <= div; i++) {
-        const p = (i / div) * size;
-        // X Lines
-        data.push(-size, 0, p, size, 0, p);
-        // Z Lines
-        data.push(p, 0, -size, p, 0, size);
-    }
-    return new Float32Array(data);
-}
-
-const keys: Record<string, boolean> = {};
-let isFirstPerson = false;
-
-window.addEventListener('keydown', (e) => {
-    keys[e.code] = true;
-    if (e.code === 'KeyV') isFirstPerson = !isFirstPerson;
-});
-window.addEventListener('keyup', (e) => keys[e.code] = false);
-
-let landerLocalPhi = 0;
-let landerLocalTheta = Math.PI / 2;
-let landerDirectionFlipped = false;
-
-let fpYaw = 0;
-let fpPitch = -0.5; // Look down 30 degrees to see the surface
-
-let camTheta = Math.PI / 4;
-let camPhi = Math.PI / 4;
-let camDist = 18;
-let isMouseDragging = false;
-
-window.addEventListener('mousedown', () => isMouseDragging = true);
-window.addEventListener('mouseup', () => isMouseDragging = false);
-window.addEventListener('mousemove', (e) => {
-    if (isMouseDragging) {
-        if (isFirstPerson) {
-            fpYaw -= e.movementX * 0.005;
-            fpPitch -= e.movementY * 0.005;
-            fpPitch = Math.max(-Math.PI/2 + 0.1, Math.min(Math.PI/2 - 0.1, fpPitch));
-        } else {
-            camPhi -= e.movementX * 0.005;
-            camTheta -= e.movementY * 0.005;
-            // Limit camera to avoid going exactly to poles (singularity in mat4.lookAt)
-            camTheta = Math.max(0.01, Math.min(Math.PI - 0.01, camTheta));
-        }
-    }
-});
-window.addEventListener('wheel', (e) => {
-    camDist += e.deltaY * 0.01;
-    camDist = Math.max(5, Math.min(50, camDist));
-});
-
-async function init() {
-    const renderer = await MiniRenderer.create();
-    const sphereData = createSphereTriangles(4, 48); // Increased radius from 2 to 4, higher detail
-    const sphereBuffer = renderer.device.createBuffer({
-        size: sphereData.byteLength,
-        usage: GPUBufferUsage.VERTEX,
-        mappedAtCreation: true
-    });
-    new Float32Array(sphereBuffer.getMappedRange()).set(sphereData);
-    sphereBuffer.unmap();
-
-    const dotData = createSphereTriangles(0.25, 12); // Slightly larger dots for the bigger sphere
-    const dotBuffer = renderer.device.createBuffer({
-        size: dotData.byteLength,
-        usage: GPUBufferUsage.VERTEX,
-        mappedAtCreation: true
-    });
-    new Float32Array(dotBuffer.getMappedRange()).set(dotData);
-    dotBuffer.unmap();
-
-    const gridData = createGridLines(20, 20); // Larger grid
-    const gridBuffer = renderer.device.createBuffer({ size: gridData.byteLength, usage: GPUBufferUsage.VERTEX, mappedAtCreation: true });
-    new Float32Array(gridBuffer.getMappedRange()).set(gridData);
-    gridBuffer.unmap();
-
-    const landerData = createPyramid(0.2); // Larger visible lander
-    const landerBuffer = renderer.device.createBuffer({ size: landerData.byteLength, usage: GPUBufferUsage.VERTEX, mappedAtCreation: true });
-    new Float32Array(landerBuffer.getMappedRange()).set(landerData);
-    landerBuffer.unmap();
-
-    const canvas = document.getElementById('gravity-canvas') as HTMLCanvasElement;
-
-    function frame() {
+    update(dt: number) {
         const time = Date.now() * 0.001;
-        const axialTilt = 0.41; 
         
-        // Update lander position based on input
-        const speed = 0.05;
-        const currentSpeed = landerDirectionFlipped ? -speed : speed;
-
-        if (keys['KeyW']) landerLocalTheta += currentSpeed;
-        if (keys['KeyS']) landerLocalTheta -= currentSpeed;
-        if (keys['KeyA']) landerLocalPhi += speed;
-        if (keys['KeyD']) landerLocalPhi -= speed;
-
-        /** 
-         * Pole-crossing logic: 
-         * When moving North/South across a pole, the latitude reflects 
-         * and the longitude flips by 180 degrees (+PI).
-         * We also flip the landerDirectionFlipped flag so holding the same key
-         * continues the motion away from the pole.
-         */
-        if (landerLocalTheta < 0) {
-            landerLocalTheta = -landerLocalTheta; 
-            landerLocalPhi += Math.PI;
-            landerDirectionFlipped = !landerDirectionFlipped;
-        } else if (landerLocalTheta > Math.PI) {
-            landerLocalTheta = 2 * Math.PI - landerLocalTheta; 
-            landerLocalPhi += Math.PI;
-            landerDirectionFlipped = !landerDirectionFlipped;
-        }
-        
-        // Normalize longitude
-        landerLocalPhi = ((landerLocalPhi % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-
-        // Pre-calculate Lander and Planet Matrices
-        const planetRot = time * 0.2;
-        const planetModel = mat4.create();
-        mat4.rotateZ(planetModel, planetModel, axialTilt);
-        mat4.rotateY(planetModel, planetModel, planetRot);
-
-        const landerModel = mat4.create();
-        const lr = 4.0; 
-        const lx = lr * Math.sin(landerLocalTheta) * Math.cos(landerLocalPhi);
-        const ly = lr * Math.cos(landerLocalTheta);
-        const lz = lr * Math.sin(landerLocalTheta) * Math.sin(landerLocalPhi);
-        
-        // Use a stable Up/Forward frame to avoid lookAt singularities
-        const lUp = vec3.fromValues(lx, ly, lz);
-        vec3.normalize(lUp, lUp);
-        const lFwd = vec3.fromValues(
-            Math.cos(landerLocalTheta) * Math.cos(landerLocalPhi),
-            -Math.sin(landerLocalTheta),
-            Math.cos(landerLocalTheta) * Math.sin(landerLocalPhi)
-        );
-        vec3.normalize(lFwd, lFwd);
-        const lRight = vec3.create();
-        vec3.cross(lRight, lUp, lFwd);
-        
-        const localOrient = mat4.create();
-        localOrient[0]=lRight[0]; localOrient[1]=lRight[1]; localOrient[2]=lRight[2];
-        localOrient[4]=lUp[0];    localOrient[5]=lUp[1];    localOrient[6]=lUp[2];
-        localOrient[8]=-lFwd[0];  localOrient[9]=-lFwd[1];  localOrient[10]=-lFwd[2];
-        localOrient[12]=lx;       localOrient[13]=ly;       localOrient[14]=lz;
-
-        mat4.multiply(landerModel, planetModel, localOrient);
-
-        renderer.render(canvas, (encoder, pass) => {
-            const aspect = canvas.clientWidth / canvas.clientHeight;
-            const proj = mat4.create();
-            mat4.perspective(proj, Math.PI / 4, aspect, 0.01, 100); // Smaller near plane for surface view
-            
-            const view = mat4.create();
-            if (isFirstPerson) {
-                // Eye is at lander world position, Up is its world normal
-                const eye = vec3.fromValues(landerModel[12], landerModel[13], landerModel[14]);
-                const up = vec3.fromValues(landerModel[4], landerModel[5], landerModel[6]);
-                const fwd = vec3.fromValues(-landerModel[8], -landerModel[9], -landerModel[10]);
-                const right = vec3.fromValues(landerModel[0], landerModel[1], landerModel[2]);
-                
-                // Lift camera slightly above the lander pyramid (size 0.2, height 0.4)
-                vec3.scaleAndAdd(eye, eye, up, 0.45);
-                
-                // Construct rotated target based on fpYaw and fpPitch
-                const pitchQuat = quat.create();
-                quat.setAxisAngle(pitchQuat, right, fpPitch);
-                const yawQuat = quat.create();
-                quat.setAxisAngle(yawQuat, up, fpYaw);
-                
-                const combined = quat.create();
-                quat.multiply(combined, yawQuat, pitchQuat);
-                
-                const viewFwd = vec3.fromValues(-landerModel[8], -landerModel[9], -landerModel[10]);
-                vec3.transformQuat(viewFwd, viewFwd, combined);
-                
-                const target = vec3.create();
-                vec3.scaleAndAdd(target, eye, viewFwd, 5.0);
-                mat4.lookAt(view, eye, target, up);
-            } else {
-                const cx = camDist * Math.sin(camTheta) * Math.cos(camPhi);
-                const cy = camDist * Math.cos(camTheta);
-                const cz = camDist * Math.sin(camTheta) * Math.sin(camPhi);
-                mat4.lookAt(view, [cx, cy, cz], [0, 0, 0], [0, 1, 0]); 
-            }
-            
-            const vp = mat4.create();
-            mat4.multiply(vp, proj, view);
-
-            // 1. Draw Background Grid
-            const gridUniforms = new Float32Array(40); 
-            gridUniforms.set(vp, 0);
-            gridUniforms.set(mat4.create(), 16);
-            gridUniforms.set([0.2, 0.2, 0.2, 0.4], 32); 
-            gridUniforms[36] = time;
-            gridUniforms[37] = 0.4;
-            gridUniforms[39] = 1.0; 
-
-            const gridUbo = renderer.device.createBuffer({
-                size: gridUniforms.byteLength,
-                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-            });
-            renderer.device.queue.writeBuffer(gridUbo, 0, gridUniforms);
-            const gridBG = renderer.device.createBindGroup({
-                layout: renderer.bindGroupLayout,
-                entries: [{ binding: 0, resource: { buffer: gridUbo } }]
-            });
-            pass.setPipeline(renderer.linePipeline);
-            pass.setBindGroup(0, gridBG);
-            pass.setVertexBuffer(0, gridBuffer);
-            pass.draw(gridData.length / 3);
-            pass.setPipeline(renderer.pipeline);
-
-            // 1.5. Draw distant Sun
-            const sunModel = mat4.create();
-            mat4.translate(sunModel, sunModel, [100, 40, 100]); 
-            mat4.scale(sunModel, sunModel, [10, 10, 10]);
-            const sunUniforms = new Float32Array(40);
-            sunUniforms.set(vp, 0); 
-            sunUniforms.set(sunModel, 16); 
-            sunUniforms.set([1, 0.9, 0.5, 1], 32); 
-            sunUniforms[37] = 1.0; 
-            sunUniforms[39] = 1.0; 
-            const sunUbo = renderer.device.createBuffer({ size: 160, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-            renderer.device.queue.writeBuffer(sunUbo, 0, sunUniforms);
-            const sunBG = renderer.device.createBindGroup({ layout: renderer.bindGroupLayout, entries: [{ binding: 0, resource: { buffer: sunUbo } }] });
-            pass.setBindGroup(0, sunBG);
-            pass.setVertexBuffer(0, sphereBuffer);
-            pass.draw(sphereData.length / 3);
-
-            // 2. Draw Tilted Planet
-            const planetUniforms = new Float32Array(40);
-            planetUniforms.set(vp, 0);
-            planetUniforms.set(planetModel, 16);
-            planetUniforms.set([0, 0.8, 0.7, 1], 32); 
-            planetUniforms[36] = time;
-            planetUniforms[37] = 1.0;
-
-            const ubo = renderer.device.createBuffer({
-                size: planetUniforms.byteLength,
-                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-            });
-            renderer.device.queue.writeBuffer(ubo, 0, planetUniforms);
-            const bindGroup = renderer.device.createBindGroup({
-                layout: renderer.bindGroupLayout,
-                entries: [{ binding: 0, resource: { buffer: ubo } }]
-            });
-            pass.setBindGroup(0, bindGroup);
-            pass.setVertexBuffer(0, sphereBuffer);
-            pass.draw(sphereData.length / 3);
-
-            // 3. Draw Axis
-            const axisLen = 5.5;
-            const axisPoints = new Float32Array([0, -axisLen, 0, 0, axisLen, 0]);
-            const axisBuf = renderer.device.createBuffer({ size: axisPoints.byteLength, usage: GPUBufferUsage.VERTEX, mappedAtCreation: true });
-            new Float32Array(axisBuf.getMappedRange()).set(axisPoints);
-            axisBuf.unmap();
-            const axisModel = mat4.create();
-            mat4.rotateZ(axisModel, axisModel, axialTilt);
-            const axisUboData = new Float32Array(40);
-            axisUboData.set(vp, 0);
-            axisUboData.set(axisModel, 16);
-            axisUboData.set([1, 0.1, 0.1, 1], 32); 
-            axisUboData[37] = 1.0; 
-            axisUboData[39] = 1.0; 
-            const uboA = renderer.device.createBuffer({ size: 160, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-            renderer.device.queue.writeBuffer(uboA, 0, axisUboData);
-            const bgA = renderer.device.createBindGroup({ layout: renderer.bindGroupLayout, entries: [{ binding: 0, resource: { buffer: uboA } }] });
-            pass.setPipeline(renderer.linePipeline);
-            pass.setBindGroup(0, bgA);
-            pass.setVertexBuffer(0, axisBuf);
-            pass.draw(2);
-            pass.setPipeline(renderer.pipeline);
-
-            // 4. Geostationary Satellite
-            const satModel = mat4.create();
-            mat4.rotateZ(satModel, satModel, axialTilt);
-            mat4.rotateY(satModel, satModel, planetRot);
-            mat4.translate(satModel, satModel, [0, 0, 7.0]);
-            const satUniforms = new Float32Array(40);
-            satUniforms.set(vp, 0);
-            satUniforms.set(satModel, 16);
-            satUniforms.set([1, 1, 0, 1], 32); 
-            satUniforms[36] = time;
-            satUniforms[37] = 1.0;
-            const uboSat = renderer.device.createBuffer({ size: 160, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-            renderer.device.queue.writeBuffer(uboSat, 0, satUniforms);
-            const bgSat = renderer.device.createBindGroup({ layout: renderer.bindGroupLayout, entries: [{ binding: 0, resource: { buffer: uboSat } }] });
-            pass.setBindGroup(0, bgSat);
-            pass.setVertexBuffer(0, dotBuffer);
-            pass.draw(dotData.length / 3);
-
-            // 5. Surface Lander
-            const landerUniforms = new Float32Array(40);
-            landerUniforms.set(vp, 0);
-            landerUniforms.set(landerModel, 16);
-            landerUniforms.set([1, 0.5, 0, 1], 32); 
-            landerUniforms[36] = time;
-            landerUniforms[37] = 1.0;
-            const uboLander = renderer.device.createBuffer({ size: 160, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-            renderer.device.queue.writeBuffer(uboLander, 0, landerUniforms);
-            const bgLander = renderer.device.createBindGroup({ layout: renderer.bindGroupLayout, entries: [{ binding: 0, resource: { buffer: uboLander } }] });
-            pass.setBindGroup(0, bgLander);
-            pass.setVertexBuffer(0, landerBuffer); 
-            pass.draw(landerData.length / 3);
-
-
-            // 6. Moon & Trajectory
-            const moonA = 10.0; const moonB = 8.5;
-            const moonInclination = 0.26;
-            const moonOmega = Math.sqrt(30.0 / Math.pow(moonA, 3)); 
-            const moonAngle = time * moonOmega;
-            const ex = Math.cos(moonAngle) * moonA;
-            const ez = Math.sin(moonAngle) * moonB;
-            const moonModel = mat4.create();
-            mat4.rotateZ(moonModel, moonModel, moonInclination);
-            mat4.translate(moonModel, moonModel, [ex, 0, ez]);
-            mat4.rotateY(moonModel, moonModel, -moonAngle + Math.PI);
-            mat4.scale(moonModel, moonModel, [0.4, 0.4, 0.4]);
-            const moonUniforms = new Float32Array(40);
-            moonUniforms.set(vp, 0); moonUniforms.set(moonModel, 16); moonUniforms.set([0.7, 0.7, 0.7, 1], 32); moonUniforms[37] = 1.0;
-            const uboMoon = renderer.device.createBuffer({ size: 160, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-            renderer.device.queue.writeBuffer(uboMoon, 0, moonUniforms);
-            const bgMoon = renderer.device.createBindGroup({ layout: renderer.bindGroupLayout, entries: [{ binding: 0, resource: { buffer: uboMoon } }] });
-            pass.setBindGroup(0, bgMoon);
-            pass.setVertexBuffer(0, sphereBuffer);
-            pass.draw(sphereData.length / 3);
-
-            // Orbit Path
-            const segments = 128;
-            const pathLines = new Float32Array(segments * 6); 
-            for (let i = 0; i < segments; i++) {
-                const a1 = (i / segments) * Math.PI * 2; const a2 = ((i + 1) / segments) * Math.PI * 2;
-                pathLines[i*6+0] = Math.cos(a1)*moonA; pathLines[i*6+2] = Math.sin(a1)*moonB;
-                pathLines[i*6+3] = Math.cos(a2)*moonA; pathLines[i*6+5] = Math.sin(a2)*moonB;
-            }
-            const pathBuffer = renderer.device.createBuffer({ size: pathLines.byteLength, usage: GPUBufferUsage.VERTEX, mappedAtCreation: true });
-            new Float32Array(pathBuffer.getMappedRange()).set(pathLines); pathBuffer.unmap();
-            const pathModel = mat4.create(); mat4.rotateZ(pathModel, pathModel, moonInclination);
-            const pathUbo = new Float32Array(40); 
-            pathUbo.set(vp, 0); 
-            pathUbo.set(pathModel, 16); 
-            pathUbo.set([1, 1, 0, 1], 32); 
-            pathUbo[37] = 0.5; // Path opacity
-            pathUbo[39] = 1.0; 
-            const uboP = renderer.device.createBuffer({ size: 160, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-            renderer.device.queue.writeBuffer(uboP, 0, pathUbo);
-            const bgP = renderer.device.createBindGroup({ layout: renderer.bindGroupLayout, entries: [{ binding: 0, resource: { buffer: uboP } }] });
-            pass.setPipeline(renderer.linePipeline); pass.setBindGroup(0, bgP); pass.setVertexBuffer(0, pathBuffer); pass.draw(segments * 2); pass.setPipeline(renderer.pipeline);
-
-            // 7. Gravity Vectors
-            const drawForce = (model: mat4, isStationary = false) => {
-                const pos = vec3.fromValues(model[12], model[13], model[14]);
-                const dist = vec3.length(pos);
-                const forceMag = 18.0 / (dist * dist);
-                const forceVec = new Float32Array([pos[0], pos[1], pos[2], pos[0]*(1-forceMag), pos[1]*(1-forceMag), pos[2]*(1-forceMag)]);
-                const lb = renderer.device.createBuffer({ size: forceVec.byteLength, usage: GPUBufferUsage.VERTEX, mappedAtCreation: true });
-                new Float32Array(lb.getMappedRange()).set(forceVec); lb.unmap();
-                const pu = new Float32Array(40); 
-                pu.set(vp, 0); pu.set(mat4.create(), 16); 
-                pu.set(isStationary ? [1,1,0,1] : [1,0,0,1], 32); 
-                pu[37] = 1.0; // Opacity
-                pu[39] = 1.0; // Flat mode
-                const uboV = renderer.device.createBuffer({ size: 160, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-                renderer.device.queue.writeBuffer(uboV, 0, pu);
-                const bgV = renderer.device.createBindGroup({ layout: renderer.bindGroupLayout, entries: [{ binding: 0, resource: { buffer: uboV } }] });
-                pass.setPipeline(renderer.linePipeline); pass.setBindGroup(0, bgV); pass.setVertexBuffer(0, lb); pass.draw(2); pass.setPipeline(renderer.pipeline);
-            };
-            drawForce(satModel, true); drawForce(landerModel); drawForce(moonModel);
+        // Input Handling for Camera and Movement
+        this.physics.update(dt, {
+            forward: this.input.isKeyDown('KeyW'),
+            back: this.input.isKeyDown('KeyS'),
+            left: this.input.isKeyDown('KeyA'),
+            right: this.input.isKeyDown('KeyD')
         });
-        
+
+        if (this.input.mouse.down) {
+            if (this.isFirstPerson) {
+                this.fpYaw -= this.input.mouse.dx * 0.005;
+                this.fpPitch -= this.input.mouse.dy * 0.005;
+                this.fpPitch = Math.max(-Math.PI/2 + 0.1, Math.min(Math.PI/2 - 0.1, this.fpPitch));
+            } else {
+                this.camPhi -= this.input.mouse.dx * 0.005;
+                this.camTheta -= this.input.mouse.dy * 0.005;
+                this.camTheta = Math.max(0.01, Math.min(Math.PI - 0.01, this.camTheta));
+            }
+        }
+        this.camDist += this.input.mouse.wheel * 0.01;
+        this.camDist = Math.max(5, Math.min(50, this.camDist));
+
+        // Matrices Update
+        const planetRot = time * 0.2;
+        mat4.identity(this.planet.transform);
+        mat4.rotateZ(this.planet.transform, this.planet.transform, this.physics.axialTilt);
+        mat4.rotateY(this.planet.transform, this.planet.transform, planetRot);
+
+        mat4.identity(this.axis.transform);
+        mat4.rotateZ(this.axis.transform, this.axis.transform, this.physics.axialTilt);
+
+        mat4.identity(this.satellite.transform);
+        mat4.rotateZ(this.satellite.transform, this.satellite.transform, this.physics.axialTilt);
+        mat4.rotateY(this.satellite.transform, this.satellite.transform, planetRot);
+        mat4.translate(this.satellite.transform, this.satellite.transform, [0, 0, 7]);
+
+        const landerLocal = this.physics.getLanderOrientation();
+        mat4.multiply(this.lander.transform, this.planet.transform, landerLocal);
+
+        // Moon
+        const moonA = 10.0; const moonB = 8.5;
+        const moonInclination = 0.26;
+        const moonOmega = Math.sqrt(30.0 / Math.pow(moonA, 3)); 
+        const moonAngle = time * moonOmega;
+        mat4.identity(this.moon.transform);
+        mat4.rotateZ(this.moon.transform, this.moon.transform, moonInclination);
+        mat4.translate(this.moon.transform, this.moon.transform, [Math.cos(moonAngle) * moonA, 0, Math.sin(moonAngle) * moonB]);
+        mat4.rotateY(this.moon.transform, this.moon.transform, -moonAngle + Math.PI);
+        mat4.scale(this.moon.transform, this.moon.transform, [0.4, 0.4, 0.4]);
+
+        mat4.identity(this.moonOrbit.transform);
+        mat4.rotateZ(this.moonOrbit.transform, this.moonOrbit.transform, moonInclination);
+
+        // Update Camera
+        if (this.isFirstPerson) {
+            const eye = vec3.fromValues(this.lander.transform[12], this.lander.transform[13], this.lander.transform[14]);
+            const up = vec3.fromValues(this.lander.transform[4], this.lander.transform[5], this.lander.transform[6]);
+            const right = vec3.fromValues(this.lander.transform[0], this.lander.transform[1], this.lander.transform[2]);
+            
+            vec3.scaleAndAdd(eye, eye, up, 0.45);
+            
+            const pq = quat.create();
+            quat.setAxisAngle(pq, right, this.fpPitch);
+            const yq = quat.create();
+            quat.setAxisAngle(yq, up, this.fpYaw);
+            
+            const combined = quat.create();
+            quat.multiply(combined, yq, pq);
+            
+            const viewFwd = vec3.fromValues(-this.lander.transform[8], -this.lander.transform[9], -this.lander.transform[10]);
+            vec3.transformQuat(viewFwd, viewFwd, combined);
+            
+            vec3.copy(this.scene.cameraPos, eye);
+            vec3.add(this.scene.cameraTarget, eye, viewFwd);
+            vec3.copy(this.scene.cameraUp, up);
+        } else {
+            this.scene.cameraPos[0] = this.camDist * Math.sin(this.camTheta) * Math.cos(this.camPhi);
+            this.scene.cameraPos[1] = this.camDist * Math.cos(this.camTheta);
+            this.scene.cameraPos[2] = this.camDist * Math.sin(this.camTheta) * Math.sin(this.camPhi);
+            vec3.set(this.scene.cameraTarget, 0, 0, 0);
+            vec3.set(this.scene.cameraUp, 0, 1, 0);
+        }
+
+        this.input.resetFrame();
+    }
+
+    start() {
+        // Toggle view mode on 'V'
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'KeyV') this.isFirstPerson = !this.isFirstPerson;
+        });
+
+        const frame = () => {
+            this.update(0.016);
+            this.scene.render(this.canvas, Date.now() * 0.001);
+            requestAnimationFrame(frame);
+        };
         requestAnimationFrame(frame);
     }
-    frame();
 }
 
-init();
-
+new SimulationApp('gravity-canvas').init();
