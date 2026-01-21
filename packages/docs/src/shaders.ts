@@ -201,7 +201,7 @@ struct Uniforms {
     modelMatrix : mat4x4<f32>,
     color : vec4<f32>,
     cameraPos : vec4<f32>, // xyz: camera pos, w: time
-    params : vec4<f32>,    // x: meshlet_id, y: zoom, z: p2, w: p3
+    params : vec4<f32>,    // x: meshlet_id, y: lod_level, z: p2, w: p3
 };
 
 @group(0) @binding(0) var<uniform> uniforms : Uniforms;
@@ -210,28 +210,63 @@ struct VertexOutput {
     @builtin(position) Position : vec4<f32>,
     @location(0) color : vec3<f32>,
     @location(1) worldNormal : vec3<f32>,
+    @location(2) uv : vec2<f32>,
 };
 
 @vertex
-fn vs_main(@location(0) position: vec3<f32>) -> VertexOutput {
+fn vs_main(@location(0) position: vec3<f32>, @builtin(vertex_index) vIdx: u32) -> VertexOutput {
     var output : VertexOutput;
     let worldPos = uniforms.modelMatrix * vec4<f32>(position, 1.0);
     output.Position = uniforms.viewProjectionMatrix * worldPos;
     
-    // Generate a unique color based on meshlet ID
     let id = uniforms.params.x;
-    let r = fract(sin(id * 12.9898) * 43758.5453);
-    let g = fract(sin(id * 78.233) * 43758.5453);
-    let b = fract(sin(id * 37.719) * 43758.5453);
-    output.color = vec3<f32>(r, g, b);
+    let lod = uniforms.params.y; // Continuous 0.0 to 9.0
+    
+    // Smooth rainbow spectrum for 10 LOD levels
+    // 0: Green (High) -> 4: Orange -> 9: Purple (Low)
+    var baseColor : vec3<f32>;
+    if (lod < 1.0) {
+        baseColor = mix(vec3<f32>(0.1, 0.9, 0.2), vec3<f32>(0.1, 0.4, 0.9), clamp(lod, 0.0, 1.0));
+    } else if (lod < 3.0) {
+        baseColor = mix(vec3<f32>(0.1, 0.4, 0.9), vec3<f32>(0.1, 0.9, 0.9), clamp((lod - 1.0) / 2.0, 0.0, 1.0));
+    } else if (lod < 5.0) {
+        baseColor = mix(vec3<f32>(0.1, 0.9, 0.9), vec3<f32>(0.9, 0.8, 0.1), clamp((lod - 3.0) / 2.0, 0.0, 1.0));
+    } else if (lod < 7.0) {
+        baseColor = mix(vec3<f32>(0.9, 0.8, 0.1), vec3<f32>(0.9, 0.1, 0.1), clamp((lod - 5.0) / 2.0, 0.0, 1.0));
+    } else {
+        baseColor = mix(vec3<f32>(0.9, 0.1, 0.1), vec3<f32>(0.5, 0.1, 0.8), clamp((lod - 7.0) / 2.0, 0.0, 1.0));
+    }
+
+    // Mix in a bit of unique per-patch grain
+    let rid = fract(sin(id * 12.98) * 437.5);
+    output.color = mix(baseColor, vec3<f32>(rid, rid, rid), 0.1);
+    
     output.worldNormal = normalize((uniforms.modelMatrix * vec4<f32>(position, 0.0)).xyz);
+    
+    // UV-like coords based on vertex index for the wireframe effect
+    let mod3 = vIdx % 3u;
+    if (mod3 == 0u) { output.uv = vec2<f32>(1.0, 0.0); }
+    else if (mod3 == 1u) { output.uv = vec2<f32>(0.0, 1.0); }
+    else { output.uv = vec2<f32>(0.0, 0.0); }
+    
     return output;
 }
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let lightDir = normalize(vec3<f32>(1.0, 1.0, 1.0));
-    let diff = max(dot(input.worldNormal, lightDir), 0.2);
-    return vec4<f32>(input.color * diff, 1.0);
+    let diff = max(dot(input.worldNormal, lightDir), 0.3);
+    
+    // Wireframe effect
+    let edgeWidth = 0.05;
+    let bary = vec3<f32>(input.uv.x, input.uv.y, 1.0 - input.uv.x - input.uv.y);
+    let isEdge = any(bary < vec3<f32>(edgeWidth));
+    
+    var finalColor = input.color * diff;
+    if (isEdge) {
+        finalColor = mix(finalColor, vec3<f32>(0.0, 0.0, 0.0), 0.5);
+    }
+    
+    return vec4<f32>(finalColor, 1.0);
 }
 `;

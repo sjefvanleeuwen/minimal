@@ -189,9 +189,11 @@
             <div class="label-tag">Visualizer: Meshlet Hierarchies</div>
             <canvas id="nanite-canvas"></canvas>
             <div class="caption">
-                <strong>Meshlet View (Wireframe/Color):</strong> In this demo, we visualize the planet by partitioning it into distinct clusters. Each color represents a "Meshlet."<br><br>
-                <strong>Distance-Based Culling:</strong> As the camera moves closer, notice how only the visible clusters are rendered at high fidelity, while the "back-side" or distant clusters are mathematically collapsed into simpler representations.<br><br>
-                <strong>Nanite Principles:</strong> Note how the boundary between meshlets remains seamless even as they transition between levels of detail.
+                <strong>Color-Coded LOD levels:</strong> To better visualize the Nanite effect, we have color-coded the subdivision density:<br>
+                - <span style="color: #00ff00">●</span> <strong>Green:</strong> High Detail (LOD 0) - Active when the camera is close.<br>
+                - <span style="color: #ffff00">●</span> <strong>Yellow:</strong> Medium Detail (LOD 1) - Transitional distance.<br>
+                - <span style="color: #ff0000">●</span> <strong>Red:</strong> Low Detail (LOD 2) - For distant geometry.<br><br>
+                <strong>Distance-Based Swapping:</strong> Rotate the camera or scroll to zoom. You will see individual "meshlet" patches pop between colors and geometric densities as they cross distance thresholds, exactly how a modern virtualized geometry system manages its vertex budget.
             </div>
         </div>
     </div>
