@@ -4,6 +4,7 @@ import { SceneManager, MeshNode } from './scene';
 import { GeometryFactory } from './geometry';
 import { InputController } from './input';
 import { meshletWgsl } from './shaders';
+import { StatsWindow, StatProperty } from './StatsWindow';
 
 export class MeshletNode extends MeshNode {
     customPipeline: GPURenderPipeline;
@@ -69,9 +70,11 @@ export class NaniteArticle {
     camPhi = Math.PI / 6;
     camDist = 8; // Start closer to see the transition
     running = false;
+    statsWindow = new StatsWindow('Virtualization Metrics');
 
     constructor(canvasId: string) {
         this.canvas = document.getElementById(canvasId) as HTMLCanvasElement;
+        this.statsWindow.mount(this.canvas.parentElement!);
     }
 
     async init(renderer: WebGPURenderer) {
@@ -133,6 +136,29 @@ export class NaniteArticle {
             let lod = Math.log2(height * 20.0 + 0.1) + 3.0;
             m.currentLod = Math.max(0, Math.min(9.9, lod));
         }
+
+        // Calculate and display Nanite-typical stats
+        const totalMeshlets = this.meshlets.length;
+        let totalVertices = 0;
+        let avgLod = 0;
+        let densityCounts = Array(10).fill(0);
+
+        for (const m of this.meshlets) {
+            const lodIdx = Math.floor(m.currentLod);
+            totalVertices += m.lodCounts[lodIdx];
+            avgLod += m.currentLod;
+            densityCounts[lodIdx]++;
+        }
+        avgLod /= totalMeshlets;
+
+        const stats: StatProperty[] = [
+            { label: 'Total Meshlets', value: totalMeshlets },
+            { label: 'Active Vertices', value: totalVertices.toLocaleString(), color: '#00ffcc' },
+            { label: 'Avg LOD Level', value: avgLod.toFixed(2), color: avgLod < 4 ? '#00ff00' : '#ffcc00' },
+            { label: 'Highest Density', value: densityCounts[0], color: '#00ff00' },
+            { label: 'Lowest Density', value: densityCounts[9], color: '#ff00ff' }
+        ];
+        this.statsWindow.update(stats);
 
         this.input.resetFrame();
     }
