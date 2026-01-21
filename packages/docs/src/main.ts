@@ -481,10 +481,11 @@ async function init() {
             pass.draw(2);
             pass.setPipeline(renderer.pipeline);
 
-            // 4. Stationary Satellite
-            const satPos = [0, 0, 7.0];
+            // 4. Geostationary Satellite
             const satModel = mat4.create();
-            mat4.translate(satModel, satModel, satPos);
+            mat4.rotateZ(satModel, satModel, axialTilt);
+            mat4.rotateY(satModel, satModel, planetRot);
+            mat4.translate(satModel, satModel, [0, 0, 7.0]);
             const satUniforms = new Float32Array(40);
             satUniforms.set(vp, 0);
             satUniforms.set(satModel, 16);
