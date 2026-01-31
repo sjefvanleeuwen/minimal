@@ -1,8 +1,13 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.22)
 project(MinimalBinaryServer)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Use new FetchContent behavior for CMake 3.22
+if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
+endif()
 
 # Cache dependencies in a stable location (won't re-download/rebuild)
 set(FETCHCONTENT_BASE_DIR "${CMAKE_SOURCE_DIR}/_deps_cache" CACHE PATH "Dependencies cache")
@@ -14,8 +19,7 @@ set(FETCHCONTENT_QUIET ON) # Quiet after first download
 # SQLite3
 FetchContent_Declare(
     sqlite3
-    URL https://www.sqlite.org/2024/sqlite-amalgamation-3470100.zip
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    URL "https://www.sqlite.org/2024/sqlite-amalgamation-3470100.zip"
 )
 FetchContent_MakeAvailable(sqlite3)
 
@@ -23,8 +27,7 @@ FetchContent_MakeAvailable(sqlite3)
 # Using URL to avoid Git subbuild issues on some systems
 FetchContent_Declare(
     entt
-    URL https://github.com/skypjack/entt/archive/refs/tags/v3.14.0.zip
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    URL "https://github.com/skypjack/entt/archive/refs/tags/v3.14.0.zip"
 )
 
 # EnTT is header-only, we don't need to build its tests or tools
@@ -34,8 +37,7 @@ FetchContent_MakeAvailable(entt)
 # Jolt Physics
 FetchContent_Declare(
     Jolt
-    URL https://github.com/jrouwe/JoltPhysics/archive/refs/tags/v5.2.0.zip
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    URL "https://github.com/jrouwe/JoltPhysics/archive/refs/tags/v5.2.0.zip"
     SOURCE_SUBDIR Build
 )
 set(TARGET_UNIT_TESTS OFF CACHE INTERNAL "")
